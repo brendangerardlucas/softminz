@@ -525,6 +525,7 @@ def build_html(ranked, front, zstats, report, models, img_b64, ii_weights, ii_so
     frontier_slugs = {r['slug'] for r in front}
     n_scored = len(ranked)
     n_measured = len(models)
+    n_cost = sum(1 for r in ranked if r.get('cost_task') is not None)
 
     # Dynamic GPT-5.6 hallucination paragraph, from this run's numbers.
     nhr_all = [v['non_hallucination_rate'] for v in models.values()
@@ -581,6 +582,13 @@ def build_html(ranked, front, zstats, report, models, img_b64, ii_weights, ii_so
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>LLM Index for Scientific Computing</title>
+<meta name="description" content="SoftMinZ — a soft-minimum index over a nine-benchmark battery chosen for scientific-computing relevance, ranked against raw cost per agentic task. Updated daily from Artificial Analysis data.">
+<meta property="og:title" content="LLM Index for Scientific Computing (SoftMinZ)">
+<meta property="og:description" content="Frontier LLMs ranked by a soft-minimum performance index for scientific computing vs raw cost per agentic task. Updated daily.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://softminz.org/">
+<meta property="og:image" content="https://softminz.org/softminz_pareto.png">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='12' fill='%230f2a43'/><text x='32' y='45' font-family='sans-serif' font-size='40' font-weight='700' fill='white' text-anchor='middle'>Z</text></svg>">
 <style>{CSS}</style>
 </head>
 <body>
@@ -695,10 +703,10 @@ across all 4 benchmarks.</p>
 <p>Cheap high-volume knowledge benchmarks (AA-Omniscience, HLE, GPQA Diamond, CritPt,
 SciCode) are excluded from the cost average because they would otherwise dominate the task
 count while representing almost no real agentic spend. The result is a raw USD figure per
-agentic task — list prices only, no discounts. A handful of open-weight models are served
-by free hosting endpoints and report a $0 cost to AA; they are excluded from the cost axis
-(and the frontier) rather than treated as genuinely free products, but remain scored and
-ranked in the table.</p>
+agentic task — list prices only, no discounts. Cost data exists only where Artificial
+Analysis publishes it: {n_cost} of the {n_scored} scored models carry a price today. The rest
+(mostly models AA does not track pricing for) show — in the table and are excluded from the
+cost axis and the Pareto frontier; that is a data-availability gap, not a zero price.</p>
 
 <h2>The Artificial Analysis Intelligence Index, and why we don't use it</h2>
 <p>Artificial Analysis' own headline metric, the
@@ -776,6 +784,9 @@ def main():
     img = DATA / 'softminz_pareto.png'
     make_chart(ranked, front, img)
     img_b64 = base64.b64encode(img.read_bytes()).decode()
+    # Also publish the chart under docs/ so og:image has a real URL to
+    # point at when the page link is shared.
+    (DOCS / 'softminz_pareto.png').write_bytes(img.read_bytes())
 
     # docs/CNAME is GitHub's custom-domain binding. The pipeline must preserve
     # it across regenerations or the custom domain silently detaches on the
