@@ -548,9 +548,8 @@ def build_html(ranked, front, zstats, report, models, img_b64, ii_weights, ii_so
         f'(population σ = {(sd * 100):.1f} points) — a z-score of roughly {gpt_z:.2f} on the '
         f'trust benchmark alone. Top-ranked models sit far higher: the five best in the '
         f'table carry non-hallucination rates of {top_lo}–{top_hi}%. Because SoftMinZ is a '
-        f'soft-<em>minimum</em>, that weak trust score receives the largest Boltzmann '
-        f'weight in the average and drags every GPT-5.6 variant down even where GPQA, HLE '
-        f'and SciCode are strong — the best-placed variant ranks #{best_rank} of '
+        f'soft-<em>minimum</em>, that weak trust score drags every GPT-5.6 variant down even '
+        f'where GPQA, HLE and SciCode are strong — the best-placed variant ranks #{best_rank} of '
         f'{n_scored}.'
     ) if gpt_best else ''
     gpt_section = (
