@@ -31,8 +31,9 @@ methodology.
    de-weighted and averaged over the four agentic-workload benchmarks
    (GDPval-AA v2, τ³-Banking, Terminal-Bench v2.1, AA-LCR), weighted by task
    count.
-5. **Emits `docs/index.html`** — chart, full ranking, and the methodology —
-   as one file with no external assets.
+5. **Emits `docs/index.html`** — chart, the full ranking in two toggleable
+   views (by SoftMinZ and by cost), and the methodology — as one file with
+   no external assets.
 
 ## Battery
 

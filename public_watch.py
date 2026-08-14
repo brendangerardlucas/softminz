@@ -59,7 +59,6 @@ TODAY = datetime.date.today().isoformat()
 UA = {'User-Agent': 'Mozilla/5.0 (compatible; softminz-watch/1.0)'}
 BASE = 'https://artificialanalysis.ai/evaluations/'
 II_METHOD_URL = 'https://artificialanalysis.ai/methodology/intelligence-benchmarking'
-# TODO: replace with the published GitHub Pages / repository URL
 REPO_URL = 'https://github.com/brendangerardlucas/softminz'
 
 # ---------------------------------------------------------------------------
@@ -244,7 +243,10 @@ def scrape(max_age_h=12, ii_weights=None):
             for s, rec in records.items():
                 v = rec.get(field)
                 if isinstance(v, (int, float)):
-                    vals[s] = (float(v), rec.get('short_name') or rec.get('name') or s)
+                    # Prefer the full AA name: it distinguishes variants
+                    # (Reasoning / Non-reasoning, effort levels) that share a
+                    # short_name, so table labels stay unambiguous.
+                    vals[s] = (float(v), rec.get('name') or rec.get('short_name') or s)
 
             truth = jsonld_scores(raw, label)
             checked = bad = 0
@@ -403,7 +405,7 @@ def zscore_battery(models):
             r['softminz'] = None
 
     ranked = sorted([r for r in rows if r['battery_ok']],
-                    key=lambda r: -r['softminz'])
+                    key=lambda r: (-r['softminz'], r['slug']))
     for i, r in enumerate(ranked, 1):
         r['rank'] = i
     return ranked, rows, zstats
@@ -441,7 +443,7 @@ def make_chart(ranked, front, out_path):
                    marker=marks[i % len(marks)],
                    color=cmap(0.06 + 0.88 * i / max(len(front) - 1, 1)),
                    edgecolors='white', linewidths=1.0, zorder=5,
-                   label=f'{i + 1}. {r["name"][:30]}  (${r["cost_task"]:.3f})')
+                   label=f'{i + 1}. {r["name"][:40]}  (${r["cost_task"]:.3f})')
     ax.set_xscale('log')
     ax.set_xlabel('Agentic cost per task (USD, log scale)')
     ax.set_ylabel('SoftMinZ = −ln⟨e$^{−z}$⟩ (soft-min of battery z-scores)')
@@ -535,22 +537,31 @@ def build_html(ranked, front, zstats, report, models, img_b64, ii_weights, ii_so
     gpt_nhr_med = statistics.median(gpt_nhr) if gpt_nhr else None
     gpt_z = (gpt_nhr_med - mu) / sd if gpt_nhr_med is not None else None
     best_rank = gpt_best['rank'] if gpt_best else None
+    # Top-of-table NHR range, computed fresh each run. Ranked models are all
+    # mandated to carry a non-hallucination measurement, so the top 5 always
+    # have one.
+    top5_nhr = [r['non_hallucination_rate'] * 100 for r in ranked[:5]]
+    top_lo, top_hi = round(min(top5_nhr)), round(max(top5_nhr))
     gpt_par = (
         f'Across the {len(gpt)} GPT-5.6 variants scored today, the median non-hallucination '
         f'rate is {(gpt_nhr_med * 100):.1f}% against a field mean of {(mu * 100):.1f}% '
         f'(population σ = {(sd * 100):.1f} points) — a z-score of roughly {gpt_z:.2f} on the '
-        f'trust benchmark alone. Frontier models sit far higher: the top of the table '
-        f'carries non-hallucination rates in the 45–70% range. Because SoftMinZ is a '
+        f'trust benchmark alone. Top-ranked models sit far higher: the five best in the '
+        f'table carry non-hallucination rates of {top_lo}–{top_hi}%. Because SoftMinZ is a '
         f'soft-<em>minimum</em>, that weak trust score receives the largest Boltzmann '
         f'weight in the average and drags every GPT-5.6 variant down even where GPQA, HLE '
         f'and SciCode are strong — the best-placed variant ranks #{best_rank} of '
         f'{n_scored}.'
     ) if gpt_best else ''
+    gpt_section = (
+        f'<h3>Why the GPT-5.6 lineup scores below its reputation</h3>\n<p>{gpt_par}</p>'
+        if gpt_par else ''
+    )
 
-    rows_smz = sorted(ranked, key=lambda r: -r['softminz'])
+    rows_smz = sorted(ranked, key=lambda r: (-r['softminz'], r['slug']))
     rows_cost = sorted(ranked, key=lambda r: (r.get('cost_task') is None,
                                               r.get('cost_task') or 0,
-                                              -r['softminz']))
+                                              -r['softminz'], r['slug']))
 
     def table_rows(rows, frontier_slugs):
         out = []
@@ -717,15 +728,15 @@ the frozen Elo reference points are parameters AA itself may adjust over time, s
 values are not perfectly comparable across model vintages.</li>
 </ul>
 
-<h3>Why the GPT-5.6 lineup scores below its reputation</h3>
-<p>{gpt_par}</p>
+{gpt_section}
 
 <h2>Reproducibility</h2>
 <p class="note">Every scraped score is cross-validated against the JSON-LD metadata on its
 source page; a benchmark whose parsed values disagree is rejected rather than published.
 Intelligence Index weights and task counts used in the cost model are parsed live from
 the <a href="{II_METHOD_URL}">AA methodology page</a> on every run (today: {esc(ii_source)});
-if that page is unreachable, a frozen snapshot of the weights is used and noted here.
+if that page is unreachable or its table cannot be parsed, the run aborts rather than
+publish costs computed from stale weights.
 Today's scrape: {esc('; '.join(f'{k}: {v}' for k, v in sorted(report.items())))}.
 One script generates this page — see the <a href="{REPO_URL}">repository</a>.</p>
 
