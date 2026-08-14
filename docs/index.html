@@ -1110,10 +1110,12 @@ either — though it too remains in the cost model as agentic workload.</p>
 <p>The cost benchmarks are chosen for <strong>relevance to agentic workflow costs</strong>.
 Artificial Analysis publishes, for each benchmark in its
 Intelligence Index, a <em>weighted</em> cost per task. Dividing that by the benchmark's
-Intelligence Index weight recovers the unweighted per-benchmark cost C<sub>i</sub>; the four
+Intelligence Index weight recovers the unweighted per-benchmark cost C<sub>b</sub>; the four
 benchmarks that represent agentic workload — GDPval-AA v2, τ³-Banking, Terminal-Bench v2.1
 and AA-LCR — are then averaged weighted by task count:</p>
-<div class="math">C<sub>task</sub> = Σ<sub>i</sub> C<sub>i</sub> T<sub>i</sub> / Σ<sub>i</sub> T<sub>i</sub></div>
+<div class="math">C<sub>task</sub> = Σ<sub>b</sub> C<sub>b</sub> T<sub>b</sub> / Σ<sub>b</sub> T<sub>b</sub></div>
+<p>This is the total cost of running these 4 benchmarks divided by the number of tasks
+across all 4 benchmarks.</p>
 <p>Cheap high-volume knowledge benchmarks (AA-Omniscience, HLE, GPQA Diamond, CritPt,
 SciCode) are excluded from the cost average because they would otherwise dominate the task
 count while representing almost no real agentic spend. The result is a raw USD figure per
