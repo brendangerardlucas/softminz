@@ -766,6 +766,14 @@ def main():
     make_chart(ranked, front, img)
     img_b64 = base64.b64encode(img.read_bytes()).decode()
 
+    # docs/CNAME is GitHub's custom-domain binding. The pipeline must preserve
+    # it across regenerations or the custom domain silently detaches on the
+    # next deploy — write it back if a regeneration ever removes it.
+    cname = DOCS / 'CNAME'
+    if not cname.exists():
+        cname.write_text('softminz.org\n')
+        print('restored docs/CNAME (custom-domain binding)', file=sys.stderr)
+
     page = DOCS / 'index.html'
     page.write_text(build_html(ranked, front, zstats, report, models, img_b64,
                                ii_weights, ii_source))
