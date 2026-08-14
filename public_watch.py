@@ -501,7 +501,7 @@ tbody tr:hover { background:#eaf1f6; }
 #rank-cost-anchor:target ~ .sortctl .seg a[href="#rank-cost-anchor"] { background:var(--accent); color:#fff; font-weight:600; }
 #rank-cost-anchor:target ~ .sortctl .seg a[href="#rank-smz-anchor"] { background:#fff; color:var(--ink); font-weight:500; }
 #ranknote { color:var(--mut); font-size:13px; }
-#rank-cost-anchor:target ~ #ranknote { display:none; }
+#rank-cost-anchor:target ~ .sortctl #ranknote { display:none; }
 #rank-cost-anchor:target ~ .sortctl #ranknote-cost { display:inline; }
 #ranknote-cost { display:none; color:var(--mut); font-size:13px; }
 .note { color:var(--mut); font-size:13.5px; }
@@ -579,7 +579,6 @@ def build_html(ranked, front, zstats, report, models, img_b64, ii_weights, ii_so
 <p class="sub">Generated {TODAY} · {n_scored} models scored from {n_measured} measured by
 <a href="https://artificialanalysis.ai">Artificial Analysis</a> · raw cost data only</p>
 
-<h2>The chart</h2>
 <img class="plot" alt="SoftMinZ vs cost per agentic task scatter with Pareto frontier"
      src="data:image/png;base64,{img_b64}">
 <p class="note">Each point is a model: vertical position is the SoftMinZ performance index,
