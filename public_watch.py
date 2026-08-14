@@ -60,7 +60,7 @@ UA = {'User-Agent': 'Mozilla/5.0 (compatible; softminz-watch/1.0)'}
 BASE = 'https://artificialanalysis.ai/evaluations/'
 II_METHOD_URL = 'https://artificialanalysis.ai/methodology/intelligence-benchmarking'
 # TODO: replace with the published GitHub Pages / repository URL
-REPO_URL = 'https://github.com/REPLACE-ME/softminz'
+REPO_URL = 'https://github.com/brendangerardlucas/softminz'
 
 # ---------------------------------------------------------------------------
 # The scoring battery: nine benchmarks, chosen for relevance to scientific
