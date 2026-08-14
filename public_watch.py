@@ -19,9 +19,9 @@ SoftMinZ is the negative natural log of the mean of e^{-z}:
 
 a smooth soft-minimum of the z-scores: min(z) <= SoftMinZ <= mean(z),
 with SoftMinZ ~= mean(z) - Var(z)/2 to leading order. Balanced profiles
-are rewarded; lopsided ones are discounted. The 1/n normalisation makes
-the index intensive — coverage (how many benchmarks a model was measured
-on) does not affect the value.
+are rewarded; lopsided ones are discounted. The 1/n normalisation keeps
+the score from inflating with coverage — how many benchmarks a model was
+measured on does not affect the value.
 
 COST PER TASK
 -------------
@@ -650,9 +650,9 @@ scores 0.81 — below a model that is merely even at z&nbsp;=&nbsp;+1.0 everywhe
 the first model's higher mean (1.24 vs 1.0), because the soft-minimum punishes the
 imbalance by more than the mean gap.</li>
 <li><strong>Balanced excellence is rewarded; lopsided excellence is discounted.</strong></li>
-<li><strong>Coverage does not inflate the score.</strong> The 1/n normalisation makes the
-index intensive: being measured on more benchmarks moves the score only through the quality
-of the new result, never through the count itself.</li>
+<li><strong>Coverage does not inflate the score.</strong> The 1/n normalisation divides by
+the number of benchmarks actually measured: being measured on more benchmarks moves the score
+only through the quality of the new result, never through the count itself.</li>
 </ul>
 <p>A model is excluded from scoring entirely (no index, rather than a low one) if it is
 measured on fewer than 7 of the 9 battery benchmarks, or if either of two mandatory
