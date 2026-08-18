@@ -62,21 +62,23 @@ II_METHOD_URL = 'https://artificialanalysis.ai/methodology/intelligence-benchmar
 REPO_URL = 'https://github.com/brendangerardlucas/softminz'
 
 # ---------------------------------------------------------------------------
-# The scoring battery: nine benchmarks, chosen for relevance to scientific
+# The scoring battery: eight benchmarks, chosen for relevance to scientific
 # computing. tau3-banking is deliberately NOT scored (see webpage text).
+# (LiveCodeBench was in the battery until 2026-08-18, when Artificial
+# Analysis dropped it from their evaluations entirely.)
 # ---------------------------------------------------------------------------
 MATHSCI = ['gpqa', 'critpt', 'hle', 'omniscience']            # science & knowledge
-CODESCI = ['scicode', 'livecodebench', 'terminalbench_hard']  # code & agents
+CODESCI = ['scicode', 'terminalbench_hard']                   # code & agents
 TRUST = 'non_hallucination_rate'
 LONGCTX = 'lcr'
 BATTERY = MATHSCI + CODESCI + [TRUST, LONGCTX]
-COVERAGE_FLOOR = 7
+COVERAGE_FLOOR = 6
 MANDATORY = {'critpt', 'non_hallucination_rate'}
 
 BENCH_LABEL = {
     'gpqa': 'GPQA Diamond', 'hle': "Humanity's Last Exam",
     'critpt': 'CritPt', 'omniscience': 'AA-Omniscience',
-    'scicode': 'SciCode', 'livecodebench': 'LiveCodeBench',
+    'scicode': 'SciCode',
     'terminalbench_hard': 'Terminal-Bench Hard',
     'lcr': 'AA-LCR (long-context reasoning)',
     'non_hallucination_rate': 'Non-hallucination rate',
@@ -88,18 +90,25 @@ BENCH_URL = {
     'critpt': 'https://artificialanalysis.ai/evaluations/critpt',
     'omniscience': 'https://artificialanalysis.ai/evaluations/omniscience',
     'scicode': 'https://artificialanalysis.ai/evaluations/scicode',
-    'livecodebench': 'https://artificialanalysis.ai/evaluations/livecodebench',
     'terminalbench_hard': 'https://artificialanalysis.ai/evaluations/terminalbench-hard',
     'lcr': 'https://artificialanalysis.ai/evaluations/artificial-analysis-long-context-reasoning',
 }
 
-# AA evaluations pages to scrape: page slug -> (payload field, JSON-LD label, display)
+# Primary data source: the /leaderboards/models page embeds the COMPLETE
+# per-model dataset (~600+ records, every battery field) server-side in its
+# Next.js flight payload. As of 2026-08-18 the individual /evaluations/*
+# pages only embed the top ~30 records plus name stubs for the rest, so
+# scraping them per-page no longer yields the full field.
+MODELS_PAGE = 'https://artificialanalysis.ai/leaderboards/models'
+
+# Per-evaluation pages are still fetched for their JSON-LD ground-truth
+# blocks (top-20 scores each), which cross-validate the leaderboard scrape:
+# page slug -> (payload field, JSON-LD label).
 PAGES = {
     'gpqa-diamond':   ('gpqa', 'GPQA Diamond'),
     'humanitys-last-exam': ('hle', "Humanity's Last Exam"),
     'scicode':        ('scicode', 'SciCode'),
     'critpt':         ('critpt', 'CritPt'),
-    'livecodebench':  ('livecodebench', 'LiveCodeBench'),
     'terminalbench-hard': ('terminalbench_hard', 'Terminal-Bench Hard'),
     'omniscience':    ('omniscience', 'Omniscience Index'),
     'artificial-analysis-long-context-reasoning': ('lcr', 'AA-LCR'),
@@ -155,13 +164,15 @@ def flight(raw):
 def extract_records(payload):
     """{slug: record_dict} — each model's own nested object from the payload.
 
-    Objects are found by brace-matching outward from each "short_name"
-    anchor until one parses as a dict containing 'slug' and 'short_name'.
+    Objects are found by brace-matching outward from each "shortName"
+    anchor until one parses as a dict containing 'slug' and 'shortName'.
     Deserialising the whole record makes cross-model field leakage
-    structurally impossible.
+    structurally impossible. (AA renamed short_name -> shortName in their
+    flight payload on 2026-08-18; stub records without scores carry no
+    shortName and are skipped automatically.)
     """
     out = {}
-    for m in re.finditer(r'"short_name":"', payload):
+    for m in re.finditer(r'"shortName":"', payload):
         j = m.start()
         for _ in range(200):
             j = payload.rfind('{', 0, j)
@@ -194,7 +205,7 @@ def extract_records(payload):
                 obj = json.loads(payload[j:end + 1])
             except Exception:
                 continue
-            if (isinstance(obj, dict) and 'slug' in obj and 'short_name' in obj
+            if (isinstance(obj, dict) and 'slug' in obj and 'shortName' in obj
                     and len(obj) >= 10):
                 s = obj['slug']
                 if s not in out or len(obj) > len(out[s]):
@@ -233,74 +244,79 @@ def scrape(max_age_h=12, ii_weights=None):
         raise ValueError('ii_weights is required — call load_ii_benchmarks() first')
     cost_benchmarks = {k: v for k, v in ii_weights.items() if k in II_COST_SLUGS}
     cost_total_tasks = sum(b['tasks'] for b in cost_benchmarks.values())
+
+    # --- primary scrape: the complete model dataset from /leaderboards/models
+    try:
+        raw = fetch(MODELS_PAGE, DATA / 'leaderboards-models.html', max_age_h)
+        records = extract_records(flight(raw))
+    except Exception as e:
+        report['leaderboards/models'] = f'FAILED: {e}'
+        return dict(models), report
+    if not records:
+        report['leaderboards/models'] = 'FAILED: 0 records extracted'
+        return dict(models), report
+
+    # field map: our battery field -> AA's camelCase payload key
+    FIELD_MAP = {
+        'gpqa': 'gpqa', 'hle': 'hle', 'scicode': 'scicode', 'critpt': 'critpt',
+        'omniscience': 'omniscience', 'lcr': 'lcr',
+        'terminalbench_hard': 'terminalbenchHard',
+        'intelligence_index_v4_1': 'intelligenceIndex',
+        'non_hallucination_rate': 'omniscienceNonHallucination',
+    }
+    counts = collections.Counter()
+    for s, rec in records.items():
+        nm = rec.get('name') or rec.get('shortName') or s
+        models[s].setdefault('name', nm)
+        for f, key in FIELD_MAP.items():
+            v = rec.get(key)
+            if isinstance(v, (int, float)):
+                models[s][f] = float(v)
+                counts[f] += 1
+        # agentic cost per task from the embedded per-benchmark breakdown
+        iic = rec.get('intelligenceIndexCostPerTask')
+        if isinstance(iic, dict):
+            evals = iic.get('evaluations')
+            if isinstance(evals, list) and evals:
+                weighted = {item['slug']: item['weightedCostPerTask']
+                            for item in evals
+                            if isinstance(item, dict) and 'slug' in item}
+                total = 0.0
+                for bslug, wc in weighted.items():
+                    info = cost_benchmarks.get(bslug)
+                    if info:
+                        total += (wc / info['weight']) * info['tasks']
+                if total > 0:
+                    models[s]['cost_task'] = total / cost_total_tasks
+                    counts['cost_task'] += 1
+    report['leaderboards/models'] = (
+        f'{len(records)} records — '
+        + ', '.join(f'{f}:{counts[f]}' for f in FIELD_MAP if counts[f]))
+
+    # --- cross-validation: JSON-LD ground-truth blocks on the per-evaluation
+    # pages (top-20 scores each). Mismatches reject that benchmark's values.
     for slug, (field, label) in PAGES.items():
         try:
             raw = fetch(BASE + slug, DATA / f'{slug}.html', max_age_h)
-            payload = flight(raw)
-            records = extract_records(payload)
-
-            vals = {}
-            for s, rec in records.items():
-                v = rec.get(field)
-                if isinstance(v, (int, float)):
-                    # Prefer the full AA name: it distinguishes variants
-                    # (Reasoning / Non-reasoning, effort levels) that share a
-                    # short_name, so table labels stay unambiguous.
-                    vals[s] = (float(v), rec.get('name') or rec.get('short_name') or s)
-
             truth = jsonld_scores(raw, label)
             checked = bad = 0
             for s, exp in truth.items():
-                got = vals.get(s, (None,))[0]
+                got = models.get(s, {}).get(field)
                 if got is None:
                     continue
                 checked += 1
                 if abs(got - exp) > 1e-6:
                     bad += 1
             if checked and bad:
+                # reject: strip this field from every model rather than
+                # publish scores that disagree with AA's own ground truth
+                for s in models:
+                    models[s].pop(field, None)
                 report[slug] = f'REJECTED ({bad}/{checked} mismatched vs JSON-LD)'
-                continue
-            for s, (v, nm) in vals.items():
-                models[s][field] = v
-                models[s].setdefault('name', nm)
-            report[slug] = f'{len(vals)} models (validated {checked})'
-
-            # extras from the omniscience page: hallucination + prices
-            if slug == 'omniscience':
-                n = 0
-                for s, rec in records.items():
-                    ob = rec.get('omniscience_breakdown')
-                    if isinstance(ob, dict):
-                        nhr = (ob.get('total') or {}).get('non_hallucination_rate')
-                        if isinstance(nhr, (int, float)):
-                            models[s].setdefault('non_hallucination_rate', float(nhr))
-                            n += 1
-                report['non-hallucination rate'] = f'{n} models'
-
-            # per-benchmark weighted cost breakdown (Intelligence Index page)
-            if slug == 'artificial-analysis-intelligence-index':
-                n = 0
-                for s, rec in records.items():
-                    iic = rec.get('intelligenceIndexCostPerTask')
-                    if not isinstance(iic, dict):
-                        continue
-                    evals = iic.get('evaluations')
-                    if not (isinstance(evals, list) and evals):
-                        continue
-                    weighted = {item['slug']: item['weightedCostPerTask']
-                                for item in evals
-                                if isinstance(item, dict) and 'slug' in item}
-                    total = 0.0
-                    for bslug, wc in weighted.items():
-                        info = cost_benchmarks.get(bslug)
-                        if info:
-                            total += (wc / info['weight']) * info['tasks']
-                    if total > 0:
-                        models[s].setdefault('cost_task', total / cost_total_tasks)
-                        n += 1
-                report['agentic cost per task'] = f'{n} models'
+            else:
+                report[slug] = f'validated ({checked} checked)'
         except Exception as e:
-            report[slug] = f'FAILED: {e}'
+            report[slug] = f'validation FAILED: {e}'
         time.sleep(0.5)
     return dict(models), report
 
@@ -582,7 +598,7 @@ def build_html(ranked, front, zstats, report, models, img_b64, ii_weights, ii_so
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>LLM Index for Scientific Computing</title>
-<meta name="description" content="SoftMinZ — a soft-minimum index over a nine-benchmark battery chosen for scientific-computing relevance, ranked against raw cost per agentic task. Updated daily from Artificial Analysis data.">
+<meta name="description" content="SoftMinZ — a soft-minimum index over an eight-benchmark battery chosen for scientific-computing relevance, ranked against raw cost per agentic task. Updated daily from Artificial Analysis data.">
 <meta property="og:title" content="LLM Index for Scientific Computing (SoftMinZ)">
 <meta property="og:description" content="Frontier LLMs ranked by a soft-minimum performance index for scientific computing vs raw cost per agentic task. Updated daily.">
 <meta property="og:type" content="website">
@@ -662,19 +678,18 @@ the number of benchmarks actually measured: being measured on more benchmarks mo
 only through the quality of the new result, never through the count itself.</li>
 </ul>
 <p>A model is excluded from scoring entirely (no index, rather than a low one) if it is
-measured on fewer than 7 of the 9 battery benchmarks, or if either of two mandatory
+measured on fewer than 6 of the 8 battery benchmarks, or if either of two mandatory
 measurements is missing: <strong>CritPt</strong> (physics) and the <strong>non-hallucination
 rate</strong>. A model with no physics evaluation or no hallucination measurement is simply
 not evaluated here.</p>
 
-<h3>Why these nine benchmarks</h3>
+<h3>Why these eight benchmarks</h3>
 <p>The performance battery is chosen for <strong>relevance to scientific computing</strong>:
 science-adjacent reasoning and knowledge (<a href="{BENCH_URL['gpqa']}">GPQA Diamond</a>,
 <a href="{BENCH_URL['critpt']}">CritPt</a>,
 <a href="{BENCH_URL['hle']}">Humanity's Last Exam</a>,
 <a href="{BENCH_URL['omniscience']}">AA-Omniscience</a>), the code-execution skills real
 computational work depends on (<a href="{BENCH_URL['scicode']}">SciCode</a>,
-<a href="{BENCH_URL['livecodebench']}">LiveCodeBench</a>,
 <a href="{BENCH_URL['terminalbench_hard']}">Terminal-Bench Hard</a>), and the trust
 dimensions that decide whether a model's output can be believed without full
 re-verification (non-hallucination rate,
