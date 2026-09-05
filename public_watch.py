@@ -687,12 +687,12 @@ published cost data sort last.</p>
 </div>
 
 <h2>What SoftMinZ measures</h2>
-<p>Nine public benchmarks are scored per model. Each benchmark score is first converted to a
-z-score across every model measured on that benchmark, so all benchmarks
+<p>Eight public benchmarks are scored per model. Each benchmark score is first converted to a
+z-score across the scored cohort, so all benchmarks
 contribute in comparable units regardless of their raw scale:</p>
 <div class="math">z<sub>b</sub> = (x<sub>b</sub> − μ<sub>b</sub>) / σ<sub>b</sub>
 &nbsp;&nbsp;(μ<sub>b</sub>, σ<sub>b</sub> are the mean and sample standard deviation
-across all measured models)</div>
+across the fully-benched cohort — models evaluated on the entire battery)</div>
 <p>The index is then the negative natural logarithm of the mean of e<sup>−z</sup> over the
 model's benchmarks:</p>
 <div class="math">SoftMinZ = −ln [ (1/n) · Σ<sub>b</sub> exp(−z<sub>b</sub>) ]</div>
@@ -707,9 +707,9 @@ scores 0.81 — below a model that is merely even at z&nbsp;=&nbsp;+1.0 everywhe
 the first model's higher mean (1.24 vs 1.0), because the soft-minimum punishes the
 imbalance by more than the mean gap.</li>
 <li><strong>Balanced excellence is rewarded; lopsided excellence is discounted.</strong></li>
-<li><strong>Coverage does not inflate the score.</strong> The 1/n normalisation divides by
-the number of benchmarks actually measured: being measured on more benchmarks moves the score
-only through the quality of the new result, never through the count itself.</li>
+<li><strong>Every score covers the same ground.</strong> Because only fully-benched models
+are scored, n is the same battery size for every model — no model's index can look better
+simply by having been measured on fewer (or easier-to-average) benchmarks.</li>
 </ul>
 <p>A model is scored only if it has been evaluated on <strong>every benchmark in the
 battery</strong> — no partial profiles. A model missing even one measurement receives no
@@ -728,7 +728,7 @@ computational work depends on (<a href="{BENCH_URL['scicode']}">SciCode</a>,
 <a href="{BENCH_URL['terminalbench_v21']}">Terminal-Bench v2.1</a>), and the trust
 dimensions that decide whether a model's output can be believed without full
 re-verification (non-hallucination rate,
-<a href="{BENCH_URL['lcr']}">AA-LCR</a> long-context reasoning). A model is scored <strong>only if it has been evaluated on every benchmark in the battery</strong> — partial profiles neither receive a SoftMinZ score nor contribute to the benchmark z-statistics, so the index tracks only fully-benched models.</p>
+<a href="{BENCH_URL['lcr']}">AA-LCR</a> long-context reasoning).</p>
 <p><strong><a href="https://artificialanalysis.ai/evaluations/tau3-banking">τ³-Banking</a>
 is excluded from the performance calculation</strong> because it
 simulates fintech customer support — a domain-specific agent task whose skill profile says
