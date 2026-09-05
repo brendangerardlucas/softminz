@@ -28,9 +28,9 @@ COST PER TASK
 Artificial Analysis publishes a per-benchmark "weighted cost per task"
 for the benchmarks in its Intelligence Index. We divide each weighted
 cost by the benchmark's Intelligence Index weight to recover the
-unweighted cost, then average over the four benchmarks that represent
+unweighted cost, then average over the five benchmarks that represent
 real agentic workflow spend (GDPval-AA v2, tau3-Banking, Terminal-Bench
-v2.1, AA-LCR), weighted by task count:
+v2.1, AA-LCR v1.1, AA-Briefcase), weighted by task count:
 
     C_task = sum_b C_b * T_b / sum_b T_b
 """
@@ -124,7 +124,7 @@ PAGES = {
 # IDENTITY choice, not a weight, so it is pinned here and does not drift
 # when AA revises the methodology.
 II_COST_SLUGS = {'gdpval-aa', 'tau3-banking', 'terminalbench-v2-1',
-                 'artificial-analysis-long-context-reasoning'}
+                 'artificial-analysis-long-context-reasoning', 'aa-briefcase'}
 
 II_TABLE_NAMES = {
     'GDPval-AA v2': 'gdpval-aa', '𝜏³-Banking': 'tau3-banking',
@@ -132,7 +132,11 @@ II_TABLE_NAMES = {
     "HLE (Humanity's Last Exam)": 'humanitys-last-exam',
     'GPQA Diamond': 'gpqa-diamond', 'CritPt': 'critpt',
     'AA-Omniscience': 'omniscience',
+    # AA v4.2 (2026-09-04): LCR display name gained a version suffix.
+    'AA-LCR v1.1': 'artificial-analysis-long-context-reasoning',
     'AA-LCR': 'artificial-analysis-long-context-reasoning',
+    # AA v4.2 new benchmarks (mapped even though not scored).
+    'AA-Briefcase': 'aa-briefcase', 'GDP.pdf': 'gdp-pdf',
 }
 
 
