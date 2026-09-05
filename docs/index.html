@@ -220,12 +220,16 @@ cost axis and the Pareto frontier; that is a data-availability gap, not a zero p
 <a href="https://artificialanalysis.ai/methodology/intelligence-benchmarking">Intelligence Index v4.2</a>, is a plain weighted average of
 normalised benchmark scores:</p>
 <div class="math">II = Σ<sub>b</sub> w<sub>b</sub> · s<sub>b</sub></div>
-<p>with category weights Agents 34%, Coding 24%, Scientific Reasoning 24%, General 18%,
-and per-benchmark weights GDPval-AA v2 20%, τ³-Banking 14%, Terminal-Bench v2.1 16%,
-SciCode 8%, HLE 12%, GPQA Diamond 6%, CritPt 6%, AA-Omniscience 12% (itself split: 8%
-accuracy + 4% non-hallucination) and AA-LCR 6%. GDPval-AA v2 Elo scores are folded in as
-clamp((Elo − 500) / 2000). (Formula per the
-<a href="https://artificialanalysis.ai/methodology/intelligence-benchmarking">AA methodology page</a>.)</p>
+<p>with category weights Agents 30%, Coding 20%, Scientific Reasoning 20%, General 30%,
+and per-benchmark weights AA-Briefcase 15%, GDPval-AA v2 10%, τ³-Banking 5%,
+Terminal-Bench v2.1 10%, SciCode 10%, HLE 10%, GDP.pdf 10%, CritPt 10%,
+AA-Omniscience 15% (split: 10% accuracy + 5% non-hallucination) and AA-LCR v1.1 5%
+(per the live-parsed
+<a href="https://artificialanalysis.ai/methodology/intelligence-benchmarking">AA methodology page</a>, Intelligence Index v4.2, September 2026).
+The September 2026 v4.2 revision <strong>removed GPQA Diamond from the Index</strong> and
+added AA-Briefcase (15%) and GDP.pdf (10%), regraded SciCode to v1.0.1, and lifted the
+held-out share of the Index to 40% — all of which shifts what the headline measures;
+the numbers below track the current revision on every run.</p>
 <p>It is a useful headline, but for scientific work it has real flaws:</p>
 <ul>
 <li><strong>A linear average hides weakness.</strong> A model that is excellent on agentic
@@ -234,11 +238,13 @@ linearly cancels one weak one. For science, a hallucinated citation or a confide
 intermediate result can invalidate the whole task — the failure mode a soft-minimum
 punishes and an average does not.</li>
 <li><strong>Hallucination is nearly an afterthought.</strong> Non-hallucination carries only
-4% of the total weight inside AA-Omniscience's 12% share. Here it is a mandatory benchmark
+5% of the total weight inside AA-Omniscience's 15% share. Here it is a mandatory benchmark
 and a dominant term whenever it is bad.</li>
-<li><strong>The weighting emphasises generalist agentic work, not science.</strong> 34%
-Agents includes τ³-Banking (14%), a fintech customer-support simulation — a large weight on
-a skill orthogonal to scientific capability.</li>
+<li><strong>The weighting emphasises generalist agentic work, not science.</strong> Agents
+plus the generalist additions of the September 2026 revision — AA-Briefcase (15%) and
+GDP.pdf (10%) — put roughly half the Index on knowledge-work and business deliverables,
+while GPQA Diamond, the one graduate-science benchmark, was removed entirely. The skill
+mix measures office work, not scientific capability.</li>
 <li><strong>Ad hoc normalisations.</strong> The GDPval clamp((Elo − 500)/2000) mapping and
 the frozen Elo reference points are parameters AA itself may adjust over time, so index
 values are not perfectly comparable across model vintages.</li>
