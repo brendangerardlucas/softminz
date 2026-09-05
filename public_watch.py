@@ -65,10 +65,13 @@ REPO_URL = 'https://github.com/brendangerardlucas/softminz'
 # The scoring battery: eight benchmarks, chosen for relevance to scientific
 # computing. tau3-banking is deliberately NOT scored (see webpage text).
 # (LiveCodeBench was in the battery until 2026-08-18, when Artificial
-# Analysis dropped it from their evaluations entirely.)
+# Analysis dropped it from their evaluations entirely. Terminal-Bench Hard
+# was swapped for Terminal-Bench v2.1 on 2026-09-05: TB-Hard is frozen
+# legacy that new models increasingly lack, while v2.1 is the live version
+# — the strict completeness cohort went 20 -> 90 on the swap.)
 # ---------------------------------------------------------------------------
 MATHSCI = ['gpqa', 'critpt', 'hle', 'omniscience']            # science & knowledge
-CODESCI = ['scicode', 'terminalbench_hard']                   # code & agents
+CODESCI = ['scicode', 'terminalbench_v21']                    # code & agents
 TRUST = 'non_hallucination_rate'
 LONGCTX = 'lcr'
 BATTERY = MATHSCI + CODESCI + [TRUST, LONGCTX]
@@ -82,7 +85,7 @@ BENCH_LABEL = {
     'gpqa': 'GPQA Diamond', 'hle': "Humanity's Last Exam",
     'critpt': 'CritPt', 'omniscience': 'AA-Omniscience',
     'scicode': 'SciCode',
-    'terminalbench_hard': 'Terminal-Bench Hard',
+    'terminalbench_v21': 'Terminal-Bench v2.1',
     'lcr': 'AA-LCR (long-context reasoning)',
     'non_hallucination_rate': 'Non-hallucination rate',
 }
@@ -93,7 +96,7 @@ BENCH_URL = {
     'critpt': 'https://artificialanalysis.ai/evaluations/critpt',
     'omniscience': 'https://artificialanalysis.ai/evaluations/omniscience',
     'scicode': 'https://artificialanalysis.ai/evaluations/scicode',
-    'terminalbench_hard': 'https://artificialanalysis.ai/evaluations/terminalbench-hard',
+    'terminalbench_v21': 'https://artificialanalysis.ai/evaluations/terminalbench-v2-1',
     'lcr': 'https://artificialanalysis.ai/evaluations/artificial-analysis-long-context-reasoning',
 }
 
@@ -112,7 +115,7 @@ PAGES = {
     'humanitys-last-exam': ('hle', "Humanity's Last Exam"),
     'scicode':        ('scicode', 'SciCode'),
     'critpt':         ('critpt', 'CritPt'),
-    'terminalbench-hard': ('terminalbench_hard', 'Terminal-Bench Hard'),
+    'terminalbench-v2-1': ('terminalbench_v21', 'Terminal-Bench v2.1'),
     'omniscience':    ('omniscience', 'Omniscience Index'),
     'artificial-analysis-long-context-reasoning': ('lcr', 'AA-LCR'),
     'artificial-analysis-intelligence-index': ('intelligence_index_v4_1', 'Intelligence Index'),
@@ -267,7 +270,7 @@ def scrape(max_age_h=12, ii_weights=None):
     FIELD_MAP = {
         'gpqa': 'gpqa', 'hle': 'hle', 'scicode': 'scicode', 'critpt': 'critpt',
         'omniscience': 'omniscience', 'lcr': 'lcr',
-        'terminalbench_hard': 'terminalbenchHard',
+        'terminalbench_v21': 'terminalbenchV21',
         'intelligence_index_v4_1': 'intelligenceIndex',
         'non_hallucination_rate': 'omniscienceNonHallucination',
         'analystAgent': 'analystAgent',  # watch-only (not scored; see _watch_analyst_agent)
@@ -722,7 +725,7 @@ science-adjacent reasoning and knowledge (<a href="{BENCH_URL['gpqa']}">GPQA Dia
 <a href="{BENCH_URL['hle']}">Humanity's Last Exam</a>,
 <a href="{BENCH_URL['omniscience']}">AA-Omniscience</a>), the code-execution skills real
 computational work depends on (<a href="{BENCH_URL['scicode']}">SciCode</a>,
-<a href="{BENCH_URL['terminalbench_hard']}">Terminal-Bench Hard</a>), and the trust
+<a href="{BENCH_URL['terminalbench_v21']}">Terminal-Bench v2.1</a>), and the trust
 dimensions that decide whether a model's output can be believed without full
 re-verification (non-hallucination rate,
 <a href="{BENCH_URL['lcr']}">AA-LCR</a> long-context reasoning). A model is scored <strong>only if it has been evaluated on every benchmark in the battery</strong> — partial profiles neither receive a SoftMinZ score nor contribute to the benchmark z-statistics, so the index tracks only fully-benched models.</p>
