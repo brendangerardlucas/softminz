@@ -72,8 +72,11 @@ CODESCI = ['scicode', 'terminalbench_hard']                   # code & agents
 TRUST = 'non_hallucination_rate'
 LONGCTX = 'lcr'
 BATTERY = MATHSCI + CODESCI + [TRUST, LONGCTX]
-COVERAGE_FLOOR = 6
-MANDATORY = {'critpt', 'non_hallucination_rate'}
+# STRICT COMPLETENESS (user directive 2026-09-05): a model is a data point
+# only if AA has evaluated it on EVERY battery benchmark — no partial
+# profiles in the z-pools and no partial scores. The scored cohort shrinks
+# to the models AA fully benched; that is the price of representativeness.
+# (Supersedes the old COVERAGE_FLOOR=6 + MANDATORY partial rules.)
 
 BENCH_LABEL = {
     'gpqa': 'GPQA Diamond', 'hle': "Humanity's Last Exam",
@@ -267,6 +270,7 @@ def scrape(max_age_h=12, ii_weights=None):
         'terminalbench_hard': 'terminalbenchHard',
         'intelligence_index_v4_1': 'intelligenceIndex',
         'non_hallucination_rate': 'omniscienceNonHallucination',
+        'analystAgent': 'analystAgent',  # watch-only (not scored; see _watch_analyst_agent)
     }
     counts = collections.Counter()
     for s, rec in records.items():
@@ -386,6 +390,26 @@ def load_ii_benchmarks(cache_dir, max_age_h=12):
 # ---------------------------------------------------------------------------
 # Scoring
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# AA-AnalystAgent watch (user directive 2026-09-05): NOT scored (30-model
+# frontier-only coverage; not yet representative). This standing check logs
+# coverage every run; the directive is to strongly consider adding it to the
+# battery once AA publishes broad evaluation.
+# ---------------------------------------------------------------------------
+ANALYST_AGENT_WATCH_THRESHOLD = 100
+
+
+def _watch_analyst_agent(models):
+    n = sum(1 for d in models.values() if d.get('analystAgent') is not None)
+    total = len(models)
+    line = (f'analystAgent watch: {n}/{total} models evaluated '
+            f'(threshold {ANALYST_AGENT_WATCH_THRESHOLD})')
+    if n >= ANALYST_AGENT_WATCH_THRESHOLD:
+        line += ' — THRESHOLD REACHED: strongly consider adding to battery'
+    print(line, file=sys.stderr)
+    return n
+
+
 def zscore_battery(models):
     """z-score every battery benchmark across all models measured on it,
     apply the coverage/mandatory gates, compute SoftMinZ. Returns rows."""
@@ -398,9 +422,13 @@ def zscore_battery(models):
         r['ii'] = d.get('intelligence_index_v4_1')
         rows.append(r)
 
+    # z-pools: STRICT — only models with the complete battery contribute
+    # to the mean/SD (partial profiles neither receive a score nor move
+    # the statistics).
+    complete = [r for r in rows if all(r.get(f) is not None for f in BATTERY)]
     zstats = {}
     for f in BATTERY:
-        vals = [r[f] for r in rows if r.get(f) is not None]
+        vals = [r[f] for r in complete]
         if len(vals) >= 5:
             mu = sum(vals) / len(vals)
             # Sample SD (Bessel-corrected, n-1): the measured field is treated
@@ -416,8 +444,7 @@ def zscore_battery(models):
         for f in BATTERY:
             if r.get(f) is not None and f in zstats:
                 r['zscores'][f] = (r[f] - zstats[f][0]) / zstats[f][1]
-        r['battery_ok'] = (all(r.get(m) is not None for m in MANDATORY)
-                           and len(r['zscores']) >= COVERAGE_FLOOR)
+        r['battery_ok'] = all(r.get(f) is not None for f in BATTERY)
         if r['battery_ok']:
             zs = list(r['zscores'].values())
             r['softminz'] = round(-math.log(sum(math.exp(-z) for z in zs) / len(zs)), 2)
@@ -602,7 +629,7 @@ def build_html(ranked, front, zstats, report, models, img_b64, ii_weights, ii_so
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>LLM Index for Scientific Computing</title>
-<meta name="description" content="SoftMinZ — a soft-minimum index over an eight-benchmark battery chosen for scientific-computing relevance, ranked against raw cost per agentic task. Updated daily from Artificial Analysis data.">
+<meta name="description" content="SoftMinZ — a soft-minimum index over an eight-benchmark battery chosen for scientific-computing relevance, ranked against raw cost per agentic task. Only models evaluated on every battery benchmark are scored. Updated daily from Artificial Analysis data.">
 <meta property="og:title" content="LLM Index for Scientific Computing (SoftMinZ)">
 <meta property="og:description" content="Frontier LLMs ranked by a soft-minimum performance index for scientific computing vs raw cost per agentic task. Updated daily.">
 <meta property="og:type" content="website">
@@ -697,7 +724,7 @@ computational work depends on (<a href="{BENCH_URL['scicode']}">SciCode</a>,
 <a href="{BENCH_URL['terminalbench_hard']}">Terminal-Bench Hard</a>), and the trust
 dimensions that decide whether a model's output can be believed without full
 re-verification (non-hallucination rate,
-<a href="{BENCH_URL['lcr']}">AA-LCR</a> long-context reasoning).</p>
+<a href="{BENCH_URL['lcr']}">AA-LCR</a> long-context reasoning). A model is scored <strong>only if it has been evaluated on every benchmark in the battery</strong> — partial profiles neither receive a SoftMinZ score nor contribute to the benchmark z-statistics, so the index tracks only fully-benched models.</p>
 <p><strong><a href="https://artificialanalysis.ai/evaluations/tau3-banking">τ³-Banking</a>
 is excluded from the performance calculation</strong> because it
 simulates fintech customer support — a domain-specific agent task whose skill profile says
@@ -790,6 +817,7 @@ def main():
     print('Scraping Artificial Analysis...', file=sys.stderr)
     models, report = scrape(ii_weights=ii_weights)
     print(f'{len(models)} models scraped', file=sys.stderr)
+    _watch_analyst_agent(models)
     rejected = [k for k, v in report.items() if 'REJECTED' in str(v) or 'FAILED' in str(v)]
     if rejected:
         print('WARNING: rejected/failed pages:', ', '.join(rejected), file=sys.stderr)
