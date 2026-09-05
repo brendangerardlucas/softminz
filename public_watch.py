@@ -708,11 +708,12 @@ imbalance by more than the mean gap.</li>
 the number of benchmarks actually measured: being measured on more benchmarks moves the score
 only through the quality of the new result, never through the count itself.</li>
 </ul>
-<p>A model is excluded from scoring entirely (no index, rather than a low one) if it is
-measured on fewer than 6 of the 8 battery benchmarks, or if either of two mandatory
-measurements is missing: <strong>CritPt</strong> (physics) and the <strong>non-hallucination
-rate</strong>. A model with no physics evaluation or no hallucination measurement is simply
-not evaluated here.</p>
+<p>A model is scored only if it has been evaluated on <strong>every benchmark in the
+battery</strong> — no partial profiles. A model missing even one measurement receives no
+index (rather than a gamed low one) and, just as important, contributes to no benchmark's
+z-statistics: the mean and spread of each benchmark are computed over fully-benched models
+only. The scored cohort is therefore exactly the set of models Artificial Analysis has
+completely evaluated — smaller, but representative.</p>
 
 <h3>Why these eight benchmarks</h3>
 <p>The performance battery is chosen for <strong>relevance to scientific computing</strong>:
@@ -740,12 +741,12 @@ either — though it too remains in the cost model as agentic workload.</p>
 <p>The cost benchmarks are chosen for <strong>relevance to agentic workflow costs</strong>.
 Artificial Analysis publishes, for each benchmark in its
 Intelligence Index, a <em>weighted</em> cost per task. Dividing that by the benchmark's
-Intelligence Index weight recovers the unweighted per-benchmark cost C<sub>b</sub>; the four
-benchmarks that represent agentic workload — GDPval-AA v2, τ³-Banking, Terminal-Bench v2.1
-and AA-LCR — are then averaged weighted by task count:</p>
+Intelligence Index weight recovers the unweighted per-benchmark cost C<sub>b</sub>; the five
+benchmarks that represent agentic workload — GDPval-AA v2, τ³-Banking, Terminal-Bench v2.1,
+AA-LCR v1.1 and AA-Briefcase — are then averaged weighted by task count:</p>
 <div class="math">C<sub>task</sub> = Σ<sub>b</sub> C<sub>b</sub> T<sub>b</sub> / Σ<sub>b</sub> T<sub>b</sub></div>
-<p>This is the total cost of running these 4 benchmarks divided by the number of tasks
-across all 4 benchmarks.</p>
+<p>This is the total cost of running these 5 benchmarks divided by the number of tasks
+across all 5 benchmarks.</p>
 <p>Cheap high-volume knowledge benchmarks (AA-Omniscience, HLE, GPQA Diamond, CritPt,
 SciCode) are excluded from the cost average because they would otherwise dominate the task
 count while representing almost no real agentic spend. The result is a raw USD figure per
@@ -756,7 +757,7 @@ cost axis and the Pareto frontier; that is a data-availability gap, not a zero p
 
 <h2>The Artificial Analysis Intelligence Index, and why we don't use it</h2>
 <p>Artificial Analysis' own headline metric, the
-<a href="{II_METHOD_URL}">Intelligence Index v4.1.1</a>, is a plain weighted average of
+<a href="{II_METHOD_URL}">Intelligence Index v4.2</a>, is a plain weighted average of
 normalised benchmark scores:</p>
 <div class="math">II = Σ<sub>b</sub> w<sub>b</sub> · s<sub>b</sub></div>
 <p>with category weights Agents 34%, Coding 24%, Scientific Reasoning 24%, General 18%,
