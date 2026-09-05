@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """SoftMinZ public model-value watch — one script, one webpage.
 
-Scrapes Artificial Analysis (free, no key), z-scores a fixed 9-benchmark
+Scrapes Artificial Analysis (free, no key), z-scores a fixed 8-benchmark
 battery chosen for scientific-computing relevance, computes the SoftMinZ
 index (a coverage-normalised soft-minimum of the z-scores), prices each
 model with an agentic-workload cost per task derived from raw AA cost
