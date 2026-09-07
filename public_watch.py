@@ -62,16 +62,17 @@ II_METHOD_URL = 'https://artificialanalysis.ai/methodology/intelligence-benchmar
 REPO_URL = 'https://github.com/brendangerardlucas/softminz'
 
 # ---------------------------------------------------------------------------
-# The scoring battery: eight benchmarks, chosen for relevance to scientific
-# computing. tau3-banking is deliberately NOT scored (see webpage text).
-# (LiveCodeBench was in the battery until 2026-08-18, when Artificial
-# Analysis dropped it from their evaluations entirely. Terminal-Bench Hard
-# was swapped for Terminal-Bench v2.1 on 2026-09-05: TB-Hard is frozen
-# legacy that new models increasingly lack, while v2.1 is the live version
-# — the strict completeness cohort went 20 -> 90 on the swap.)
+# The scoring battery: seven benchmarks, chosen for relevance to scientific
+# computing. (LiveCodeBench was in the battery until 2026-08-18, when
+# Artificial Analysis dropped it. Terminal-Bench Hard -> v2.1 on 2026-09-05;
+# v2.1 -> v4.0 on 2026-09-07 when AA's Intelligence Index v5 adopted it.
+# GPQA Diamond was dropped 2026-09-07 (user directive: nothing the II has
+# dropped stays in softminz, scored or on the cost axis — GPQA left the II
+# in AA's v4.2 revision). tau3-banking left the II in v5 and is likewise
+# gone from both the battery and the cost axis.)
 # ---------------------------------------------------------------------------
-MATHSCI = ['gpqa', 'critpt', 'hle', 'omniscience']            # science & knowledge
-CODESCI = ['scicode', 'terminalbench_v21']                    # code & agents
+MATHSCI = ['critpt', 'hle', 'omniscience']                    # science & knowledge
+CODESCI = ['scicode', 'terminalbench_v40']                    # code & agents
 TRUST = 'non_hallucination_rate'
 LONGCTX = 'lcr'
 BATTERY = MATHSCI + CODESCI + [TRUST, LONGCTX]
@@ -82,21 +83,20 @@ BATTERY = MATHSCI + CODESCI + [TRUST, LONGCTX]
 # (Supersedes the old COVERAGE_FLOOR=6 + MANDATORY partial rules.)
 
 BENCH_LABEL = {
-    'gpqa': 'GPQA Diamond', 'hle': "Humanity's Last Exam",
+    'hle': "Humanity's Last Exam",
     'critpt': 'CritPt', 'omniscience': 'AA-Omniscience',
     'scicode': 'SciCode',
-    'terminalbench_v21': 'Terminal-Bench v2.1',
+    'terminalbench_v40': 'Terminal-Bench v4.0',
     'lcr': 'AA-LCR (long-context reasoning)',
     'non_hallucination_rate': 'Non-hallucination rate',
 }
 # Evaluation-page links used for inline citations on the webpage.
 BENCH_URL = {
-    'gpqa': 'https://artificialanalysis.ai/evaluations/gpqa-diamond',
     'hle': 'https://artificialanalysis.ai/evaluations/humanitys-last-exam',
     'critpt': 'https://artificialanalysis.ai/evaluations/critpt',
     'omniscience': 'https://artificialanalysis.ai/evaluations/omniscience',
     'scicode': 'https://artificialanalysis.ai/evaluations/scicode',
-    'terminalbench_v21': 'https://artificialanalysis.ai/evaluations/terminalbench-v2-1',
+    'terminalbench_v40': 'https://artificialanalysis.ai/evaluations/terminalbench-v4-0',
     'lcr': 'https://artificialanalysis.ai/evaluations/artificial-analysis-long-context-reasoning',
 }
 
@@ -111,11 +111,10 @@ MODELS_PAGE = 'https://artificialanalysis.ai/leaderboards/models'
 # blocks (top-20 scores each), which cross-validate the leaderboard scrape:
 # page slug -> (payload field, JSON-LD label).
 PAGES = {
-    'gpqa-diamond':   ('gpqa', 'GPQA Diamond'),
     'humanitys-last-exam': ('hle', "Humanity's Last Exam"),
     'scicode':        ('scicode', 'SciCode'),
     'critpt':         ('critpt', 'CritPt'),
-    'terminalbench-v2-1': ('terminalbench_v21', 'Terminal-Bench v2.1'),
+    'terminalbench-v4-0': ('terminalbench_v40', 'Terminal-Bench v4.0'),
     'omniscience':    ('omniscience', 'Omniscience Index'),
     'artificial-analysis-long-context-reasoning': ('lcr', 'AA-LCR'),
     'artificial-analysis-intelligence-index': ('intelligence_index_v4_1', 'Intelligence Index'),
@@ -129,20 +128,28 @@ PAGES = {
 # Which benchmarks represent agentic workflow cost (II_COST_SLUGS) is an
 # IDENTITY choice, not a weight, so it is pinned here and does not drift
 # when AA revises the methodology.
-II_COST_SLUGS = {'gdpval-aa', 'tau3-banking', 'terminalbench-v2-1',
+# II v5 (2026-09-07): the cost axis tracks what the CURRENT II weights —
+# benchmark dropped from the II = dropped from the cost axis too. GPQA
+# (left II in v4.2), tau3-banking and Terminal-Bench v2.1 (both left in
+# v5) are gone. AutomationBench-AA and AA-Briefcase feed COST weights
+# only — deliberately never scored (user directive 2026-09-07).
+II_COST_SLUGS = {'gdpval-aa', 'automationbench-aa', 'terminalbench-v4-0',
                  'artificial-analysis-long-context-reasoning', 'aa-briefcase'}
 
 II_TABLE_NAMES = {
     'GDPval-AA v2': 'gdpval-aa', '𝜏³-Banking': 'tau3-banking',
-    'Terminal-Bench v2.1': 'terminalbench-v2-1', 'SciCode': 'scicode',
+    'SciCode': 'scicode',
     "HLE (Humanity's Last Exam)": 'humanitys-last-exam',
-    'GPQA Diamond': 'gpqa-diamond', 'CritPt': 'critpt',
+    'CritPt': 'critpt',
     'AA-Omniscience': 'omniscience',
     # AA v4.2 (2026-09-04): LCR display name gained a version suffix.
     'AA-LCR v1.1': 'artificial-analysis-long-context-reasoning',
     'AA-LCR': 'artificial-analysis-long-context-reasoning',
     # AA v4.2 new benchmarks (mapped even though not scored).
     'AA-Briefcase': 'aa-briefcase', 'GDP.pdf': 'gdp-pdf',
+    # AA v5 (2026-09-07): new II members (cost weights only, not scored).
+    'AutomationBench-AA': 'automationbench-aa',
+    'Terminal-Bench v4.0': 'terminalbench-v4-0',
 }
 
 
@@ -268,11 +275,10 @@ def scrape(max_age_h=12, ii_weights=None):
 
     # field map: our battery field -> AA's camelCase payload key
     FIELD_MAP = {
-        'gpqa': 'gpqa', 'hle': 'hle', 'scicode': 'scicode', 'critpt': 'critpt',
+        'hle': 'hle', 'scicode': 'scicode', 'critpt': 'critpt',
         'omniscience': 'omniscience', 'lcr': 'lcr',
-        'terminalbench_v21': 'terminalbenchV21',
+        'terminalbench_v40': 'terminalbenchV40',
         'intelligence_index_v4_1': 'intelligenceIndex',
-        'non_hallucination_rate': 'omniscienceNonHallucination',
         'analystAgent': 'analystAgent',  # watch-only (not scored; see _watch_analyst_agent)
     }
     counts = collections.Counter()
@@ -284,6 +290,21 @@ def scrape(max_age_h=12, ii_weights=None):
             if isinstance(v, (int, float)):
                 models[s][f] = float(v)
                 counts[f] += 1
+        # non-hallucination rate (battery TRUST field): flat payload key
+        # primary; derived fallback 1 - breakdown.total.hallucinationRate
+        # (AA v5 shells sometimes drop the flat key).
+        nhr = rec.get('omniscienceNonHallucination')
+        if not isinstance(nhr, (int, float)):
+            ob = rec.get('omniscienceBreakdown')
+            if isinstance(ob, dict):
+                tot = ob.get('total')
+                if isinstance(tot, dict):
+                    hr = tot.get('hallucinationRate')
+                    if isinstance(hr, (int, float)):
+                        nhr = 1.0 - float(hr)
+        if isinstance(nhr, (int, float)):
+            models[s]['non_hallucination_rate'] = float(nhr)
+            counts['non_hallucination_rate'] += 1
         # agentic cost per task from the embedded per-benchmark breakdown
         iic = rec.get('intelligenceIndexCostPerTask')
         if isinstance(iic, dict):
@@ -702,9 +723,9 @@ the profile becomes more uneven. The practical consequences:</p>
 <ul>
 <li><strong>A weak benchmark cannot be averaged away.</strong> The exponential weights
 e<sup>−z</sup> concentrate on the model's <em>worst</em> results. The discount is not
-cosmetic: a model with eight benchmarks at z&nbsp;=&nbsp;+1.5 and one at z&nbsp;=&nbsp;−0.8
-scores 0.81 — below a model that is merely even at z&nbsp;=&nbsp;+1.0 everywhere, despite
-the first model's higher mean (1.24 vs 1.0), because the soft-minimum punishes the
+cosmetic: a model with seven benchmarks at z&nbsp;=&nbsp;+1.5 and one at z&nbsp;=&nbsp;−0.8
+scores 0.75 — below a model that is merely even at z&nbsp;=&nbsp;+1.0 everywhere, despite
+the first model's higher mean (1.21 vs 1.0), because the soft-minimum punishes the
 imbalance by more than the mean gap.</li>
 <li><strong>Balanced excellence is rewarded; lopsided excellence is discounted.</strong></li>
 <li><strong>Every score covers the same ground.</strong> Because only fully-benched models
@@ -718,39 +739,42 @@ z-statistics: the mean and spread of each benchmark are computed over fully-benc
 only. The scored cohort is therefore exactly the set of models Artificial Analysis has
 completely evaluated — smaller, but representative.</p>
 
-<h3>Why these eight benchmarks</h3>
+<h3>Why these seven benchmarks</h3>
 <p>The performance battery is chosen for <strong>relevance to scientific computing</strong>:
-science-adjacent reasoning and knowledge (<a href="{BENCH_URL['gpqa']}">GPQA Diamond</a>,
-<a href="{BENCH_URL['critpt']}">CritPt</a>,
+science-adjacent reasoning and knowledge (<a href="{BENCH_URL['critpt']}">CritPt</a>,
 <a href="{BENCH_URL['hle']}">Humanity's Last Exam</a>,
 <a href="{BENCH_URL['omniscience']}">AA-Omniscience</a>), the code-execution skills real
 computational work depends on (<a href="{BENCH_URL['scicode']}">SciCode</a>,
-<a href="{BENCH_URL['terminalbench_v21']}">Terminal-Bench v2.1</a>), and the trust
+<a href="{BENCH_URL['terminalbench_v40']}">Terminal-Bench v4.0</a>), and the trust
 dimensions that decide whether a model's output can be believed without full
 re-verification (non-hallucination rate,
 <a href="{BENCH_URL['lcr']}">AA-LCR</a> long-context reasoning).</p>
-<p><strong><a href="https://artificialanalysis.ai/evaluations/tau3-banking">τ³-Banking</a>
+<p><strong>GPQA Diamond was removed from the battery on 2026-09-07:</strong> Artificial
+Analysis dropped it from their Intelligence Index in the v4.2 revision, and a benchmark the
+index has abandoned no longer earns a place here.
+<strong><a href="https://artificialanalysis.ai/evaluations/tau3-banking">τ³-Banking</a>
 is excluded from the performance calculation</strong> because it
 simulates fintech customer support — a domain-specific agent task whose skill profile says
-nothing about scientific capability. (It does remain in the cost calculation below, where it
-represents real agentic workflow spend.)
-<strong><a href="https://artificialanalysis.ai/evaluations/gdpval-aa">GDPval-AA v2</a>
-is likewise excluded:</strong>
-its tasks are real-world professional deliverables (analyst memos, marketing plans and the
-like), not scientific computing, so it has no place in a performance battery for science
-either — though it too remains in the cost model as agentic workload.</p>
+nothing about scientific capability; it too left the Intelligence Index in AA's v5 revision
+and is now excluded everywhere on this page.
+<strong><a href="https://artificialanalysis.ai/evaluations/gdpval-aa">GDPval-AA v2</a>,
+<a href="https://artificialanalysis.ai/evaluations/automationbench-aa">AutomationBench-AA</a>
+and AA-Briefcase are likewise excluded from scoring:</strong> they measure professional
+deliverables and workflow automation, not scientific computing — though they remain in the
+cost model below as agentic workload.</p>
 
 <h2>How the cost is computed</h2>
 <p>The cost benchmarks are chosen for <strong>relevance to agentic workflow costs</strong>.
 Artificial Analysis publishes, for each benchmark in its
 Intelligence Index, a <em>weighted</em> cost per task. Dividing that by the benchmark's
 Intelligence Index weight recovers the unweighted per-benchmark cost C<sub>b</sub>; the five
-benchmarks that represent agentic workload — GDPval-AA v2, τ³-Banking, Terminal-Bench v2.1,
-AA-LCR v1.1 and AA-Briefcase — are then averaged weighted by task count:</p>
+benchmarks that represent agentic workload — GDPval-AA v2, AutomationBench-AA,
+Terminal-Bench v4.0, AA-LCR v1.1 and AA-Briefcase — are then averaged weighted by task
+count:</p>
 <div class="math">C<sub>task</sub> = Σ<sub>b</sub> C<sub>b</sub> T<sub>b</sub> / Σ<sub>b</sub> T<sub>b</sub></div>
 <p>This is the total cost of running these 5 benchmarks divided by the number of tasks
 across all 5 benchmarks.</p>
-<p>Cheap high-volume knowledge benchmarks (AA-Omniscience, HLE, GPQA Diamond, CritPt,
+<p>Cheap high-volume knowledge benchmarks (AA-Omniscience, HLE, CritPt,
 SciCode) are excluded from the cost average because they would otherwise dominate the task
 count while representing almost no real agentic spend. The result is a raw USD figure per
 agentic task — list prices only, no discounts. Cost data exists only where Artificial
@@ -760,18 +784,19 @@ cost axis and the Pareto frontier; that is a data-availability gap, not a zero p
 
 <h2>The Artificial Analysis Intelligence Index, and why we don't use it</h2>
 <p>Artificial Analysis' own headline metric, the
-<a href="{II_METHOD_URL}">Intelligence Index v4.2</a>, is a plain weighted average of
+<a href="{II_METHOD_URL}">Intelligence Index</a>, is a plain weighted average of
 normalised benchmark scores:</p>
 <div class="math">II = Σ<sub>b</sub> w<sub>b</sub> · s<sub>b</sub></div>
 <p>with category weights Agents 30%, Coding 20%, Scientific Reasoning 20%, General 30%,
-and per-benchmark weights AA-Briefcase 15%, GDPval-AA v2 10%, τ³-Banking 5%,
-Terminal-Bench v2.1 10%, SciCode 10%, HLE 10%, GDP.pdf 10%, CritPt 10%,
+and per-benchmark weights AA-Briefcase 15%, GDPval-AA v2 10%, AutomationBench-AA 5%,
+Terminal-Bench v4.0 10%, SciCode 10%, HLE 10%, GDP.pdf 10%, CritPt 10%,
 AA-Omniscience 15% (split: 10% accuracy + 5% non-hallucination) and AA-LCR v1.1 5%
 (per the live-parsed
-<a href="{II_METHOD_URL}">AA methodology page</a>, Intelligence Index v4.2, September 2026).
-The September 2026 v4.2 revision <strong>removed GPQA Diamond from the Index</strong> and
-added AA-Briefcase (15%) and GDP.pdf (10%), regraded SciCode to v1.0.1, and lifted the
-held-out share of the Index to 40% — all of which shifts what the headline measures;
+<a href="{II_METHOD_URL}">AA methodology page</a>, Intelligence Index v5, September 2026).
+The v5 revision <strong>dropped τ³-Banking from the Index</strong> (replaced by
+AutomationBench-AA at 5%) and <strong>upgraded Terminal-Bench v2.1 to v4.0</strong>
+(a table reset — v4.0 scores exist for only a fraction of models so far, which shrinks
+every fully-benched cohort on this page until AA finishes re-running models);
 the numbers below track the current revision on every run.</p>
 <p>It is a useful headline, but for scientific work it has real flaws:</p>
 <ul>
@@ -784,10 +809,11 @@ punishes and an average does not.</li>
 5% of the total weight inside AA-Omniscience's 15% share. Here it is a mandatory benchmark
 and a dominant term whenever it is bad.</li>
 <li><strong>The weighting emphasises generalist agentic work, not science.</strong> Agents
-plus the generalist additions of the September 2026 revision — AA-Briefcase (15%) and
-GDP.pdf (10%) — put roughly half the Index on knowledge-work and business deliverables,
-while GPQA Diamond, the one graduate-science benchmark, was removed entirely. The skill
-mix measures office work, not scientific capability.</li>
+plus the generalist members — AA-Briefcase (15%), GDP.pdf (10%) and now
+AutomationBench-AA (5%) — put roughly half the Index on knowledge-work and business
+deliverables, while GPQA Diamond, the one graduate-science benchmark, has been gone
+since the v4.2 revision. The skill mix measures office work, not scientific
+capability.</li>
 <li><strong>Ad hoc normalisations.</strong> The GDPval clamp((Elo − 500)/2000) mapping and
 the frozen Elo reference points are parameters AA itself may adjust over time, so index
 values are not perfectly comparable across model vintages.</li>
