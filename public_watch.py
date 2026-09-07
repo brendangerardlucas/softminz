@@ -29,8 +29,8 @@ Artificial Analysis publishes a per-benchmark "weighted cost per task"
 for the benchmarks in its Intelligence Index. We divide each weighted
 cost by the benchmark's Intelligence Index weight to recover the
 unweighted cost, then average over the five benchmarks that represent
-real agentic workflow spend (GDPval-AA v2, tau3-Banking, Terminal-Bench
-v2.1, AA-LCR v1.1, AA-Briefcase), weighted by task count:
+real agentic workflow spend (GDPval-AA v2, AutomationBench-AA,
+Terminal-Bench v4.0, AA-LCR v1.1, AA-Briefcase), weighted by task count:
 
     C_task = sum_b C_b * T_b / sum_b T_b
 """
@@ -653,7 +653,7 @@ def build_html(ranked, front, zstats, report, models, img_b64, ii_weights, ii_so
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>LLM Index for Scientific Computing</title>
-<meta name="description" content="SoftMinZ — a soft-minimum index over an eight-benchmark battery chosen for scientific-computing relevance, ranked against raw cost per agentic task. Only models evaluated on every battery benchmark are scored. Updated daily from Artificial Analysis data.">
+<meta name="description" content="SoftMinZ — a soft-minimum index over a seven-benchmark battery chosen for scientific-computing relevance, ranked against raw cost per agentic task. Only models evaluated on every battery benchmark are scored. Updated daily from Artificial Analysis data.">
 <meta property="og:title" content="LLM Index for Scientific Computing (SoftMinZ)">
 <meta property="og:description" content="Frontier LLMs ranked by a soft-minimum performance index for scientific computing vs raw cost per agentic task. Updated daily.">
 <meta property="og:type" content="website">
@@ -708,7 +708,7 @@ published cost data sort last.</p>
 </div>
 
 <h2>What SoftMinZ measures</h2>
-<p>Eight public benchmarks are scored per model. Each benchmark score is first converted to a
+<p>Seven public benchmarks are scored per model. Each benchmark score is first converted to a
 z-score across the scored cohort, so all benchmarks
 contribute in comparable units regardless of their raw scale:</p>
 <div class="math">z<sub>b</sub> = (x<sub>b</sub> − μ<sub>b</sub>) / σ<sub>b</sub>
