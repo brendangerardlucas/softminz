@@ -829,7 +829,10 @@ cost model below as agentic workload.</p>
 <h2>How the cost is computed</h2>
 <p>The cost benchmarks are chosen for <strong>relevance to agentic workflow costs</strong>.
 Artificial Analysis publishes, for each benchmark in its
-Intelligence Index, a <em>weighted</em> cost per task. Dividing that by the benchmark's
+Intelligence Index, a <em>weighted</em> cost per task; the per-benchmark split
+comes from the priced-models table embedded in AA's model pages (the leaderboard
+payload carries only the aggregate total, which we use as a cross-check: the split
+must sum to the published total or the run fails). Dividing that by the benchmark's
 Intelligence Index weight recovers the unweighted per-benchmark cost C<sub>b</sub>; the five
 benchmarks that represent agentic workload — GDPval-AA v2, AutomationBench-AA,
 Terminal-Bench v4.0, AA-LCR v1.1 and AA-Briefcase — are then averaged weighted by task
