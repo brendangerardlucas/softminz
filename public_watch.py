@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """SoftMinZ public model-value watch — one script, one webpage.
 
-Scrapes Artificial Analysis (free, no key), z-scores a fixed 8-benchmark
+Scrapes Artificial Analysis (free, no key), z-scores a fixed 7-benchmark
 battery chosen for scientific-computing relevance, computes the SoftMinZ
-index (a coverage-normalised soft-minimum of the z-scores), prices each
-model with an agentic-workload cost per task derived from raw AA cost
-data, draws the SoftMinZ-vs-cost Pareto frontier, and emits a single
-self-contained docs/index.html for GitHub Pages.
+index (a soft-minimum of the z-scores over the fully-benched cohort),
+prices each model with an agentic-workload cost per task derived from raw
+AA cost data, draws the SoftMinZ-vs-cost Pareto frontier, and emits a
+single self-contained docs/index.html for GitHub Pages.
 
 No vendor discounts, no portal pricing, no free tiers: raw cost data only.
 
@@ -19,16 +19,17 @@ SoftMinZ is the negative natural log of the mean of e^{-z}:
 
 a smooth soft-minimum of the z-scores: min(z) <= SoftMinZ <= mean(z),
 with SoftMinZ ~= mean(z) - Var(z)/2 to leading order. Balanced profiles
-are rewarded; lopsided ones are discounted. The 1/n normalisation keeps
-the score from inflating with coverage — how many benchmarks a model was
-measured on does not affect the value.
+are rewarded; lopsided ones are discounted. Only fully-benched models are
+scored, so n is the same battery size for every model.
 
 COST PER TASK
 -------------
 Artificial Analysis publishes a per-benchmark "weighted cost per task"
-for the benchmarks in its Intelligence Index. We divide each weighted
-cost by the benchmark's Intelligence Index weight to recover the
-unweighted cost, then average over the five benchmarks that represent
+for the benchmarks in its Intelligence Index (per-model split embedded
+in the global table on every /models/<slug> page; the leaderboard payload
+carries only the aggregate total, used here as a cross-check). We divide
+each weighted cost by the benchmark's Intelligence Index weight to recover
+the unweighted cost, then average over the five benchmarks that represent
 real agentic workflow spend (GDPval-AA v2, AutomationBench-AA,
 Terminal-Bench v4.0, AA-LCR v1.1, AA-Briefcase), weighted by task count:
 
@@ -99,13 +100,52 @@ BENCH_URL = {
     'terminalbench_v40': 'https://artificialanalysis.ai/evaluations/terminalbench-v4-0',
     'lcr': 'https://artificialanalysis.ai/evaluations/artificial-analysis-long-context-reasoning',
 }
-
 # Primary data source: the /leaderboards/models page embeds the COMPLETE
 # per-model dataset (~600+ records, every battery field) server-side in its
 # Next.js flight payload. As of 2026-08-18 the individual /evaluations/*
 # pages only embed the top ~30 records plus name stubs for the rest, so
-# scraping them per-page no longer yields the full field.
+# scraping them per-page no longer yields the full field. As of 2026-09-10
+# the leaderboard's intelligenceIndexCostPerTask is only an aggregate
+# total — the per-benchmark cost split comes from a /models carrier page
+# (_fetch_cost_breakdown below).
 MODELS_PAGE = 'https://artificialanalysis.ai/leaderboards/models'
+MODELS_DIR = 'https://artificialanalysis.ai/models/'
+
+
+def _fetch_cost_breakdown(records, max_age_h=12):
+    """{model_slug: {eval_slug: weightedCostPerTask}} + carrier slug.
+ +
+    Tries the first few leaderboard slugs alphabetically; the first page
+    whose embedded table parses to a complete split wins. Dies on total
+    failure (fail-closed: no live split, no publish)."""
+    errs = []
+    for cand in sorted(records)[:5]:
+        try:
+            raw = fetch(MODELS_DIR + cand, DATA / f'model-cost-{cand}.html', max_age_h)
+        except Exception as e:
+            errs.append(f'{cand}: {e}')
+            continue
+        try:
+            costmap = {}
+            for s, rec in extract_records(flight(raw)).items():
+                iic = rec.get('intelligenceIndexCostPerTask')
+                ev = iic.get('evaluations') if isinstance(iic, dict) else None
+                if not isinstance(ev, list) or not ev:
+                    continue
+                split = {e['slug']: e['weightedCostPerTask'] for e in ev
+                         if isinstance(e, dict) and isinstance(e.get('slug'), str)
+                         and isinstance(e.get('weightedCostPerTask'), (int, float))}
+                if II_COST_SLUGS <= set(split):
+                    costmap[s] = split
+            if costmap:
+                return costmap, cand
+            errs.append(f'{cand}: 0 complete splits parsed')
+        except Exception as e:
+            errs.append(f'{cand}: {e}')
+    print(f'FATAL: no /models carrier page yielded a cost split '
+          f'({"; ".join(errs)}). Refusing to publish costs without live '
+          f'per-benchmark data.', file=sys.stderr)
+    sys.exit(1)
 
 # Per-evaluation pages are still fetched for their JSON-LD ground-truth
 # blocks (top-20 scores each), which cross-validate the leaderboard scrape:
@@ -305,22 +345,45 @@ def scrape(max_age_h=12, ii_weights=None):
         if isinstance(nhr, (int, float)):
             models[s]['non_hallucination_rate'] = float(nhr)
             counts['non_hallucination_rate'] += 1
-        # agentic cost per task from the embedded per-benchmark breakdown
+        # leaderboard cost.total is an II-weighted aggregate, not the
+        # per-benchmark split: keep it only as a cross-check of the split
+        # fetched below (sum of split must equal the published total).
         iic = rec.get('intelligenceIndexCostPerTask')
-        if isinstance(iic, dict):
-            evals = iic.get('evaluations')
-            if isinstance(evals, list) and evals:
-                weighted = {item['slug']: item['weightedCostPerTask']
-                            for item in evals
-                            if isinstance(item, dict) and 'slug' in item}
-                total = 0.0
-                for bslug, wc in weighted.items():
-                    info = cost_benchmarks.get(bslug)
-                    if info:
-                        total += (wc / info['weight']) * info['tasks']
-                if total > 0:
-                    models[s]['cost_task'] = total / cost_total_tasks
-                    counts['cost_task'] += 1
+        if isinstance(iic, dict) and isinstance(iic.get('cost'), dict):
+            tot = iic['cost'].get('total')
+            if isinstance(tot, (int, float)):
+                models[s]['_ii_cost_total'] = float(tot)
+    # --- agentic cost per task: AA moved the per-benchmark cost split off
+    # the leaderboard payload (2026-09-10: intelligenceIndexCostPerTask is
+    # now an aggregate {cost:{total}} or "$undefined"). Every /models/<slug>
+    # page embeds the GLOBAL priced-model x benchmark table, so one carrier
+    # fetch recovers the full split. Still AA-only, still live, still
+    # fail-closed: no carrier with a complete split -> the run DIES.
+    costmap, carrier = _fetch_cost_breakdown(records, max_age_h)
+    n_checked = n_bad = 0
+    for s, weighted in costmap.items():
+        if s not in models:
+            continue
+        total = 0.0
+        for bslug, wc in weighted.items():
+            info = cost_benchmarks.get(bslug)
+            if info:
+                total += (wc / info['weight']) * info['tasks']
+        if total > 0:
+            models[s]['cost_task'] = total / cost_total_tasks
+            counts['cost_task'] += 1
+        exp = models[s].pop('_ii_cost_total', None)
+        if exp is not None:
+            n_checked += 1
+            if abs(sum(weighted.values()) - exp) > 1e-6:
+                n_bad += 1
+    if n_bad:
+        print(f'FATAL: cost split sums disagree with leaderboard totals '
+              f'({n_bad}/{n_checked}). Cost semantics drifted — refusing to publish.',
+              file=sys.stderr)
+        sys.exit(1)
+    report[f'models/{carrier}'] = (f'cost split ({len(costmap)} priced, '
+                                   f'{n_checked} totals cross-checked)')
     report['leaderboards/models'] = (
         f'{len(records)} records — '
         + ', '.join(f'{f}:{counts[f]}' for f in FIELD_MAP if counts[f]))
@@ -621,7 +684,7 @@ def build_html(ranked, front, zstats, report, models, img_b64, ii_weights, ii_so
         f'trust benchmark alone. Top-ranked models sit far higher: the five best in the '
         f'table carry non-hallucination rates of {top_lo}–{top_hi}%. Because SoftMinZ is a '
         f'soft-<em>minimum</em>, that weak trust score drags every GPT-5.6 variant down even '
-        f'where GPQA, HLE and SciCode are strong — the best-placed variant ranks #{best_rank} of '
+        f'where CritPt, HLE and SciCode are strong — the best-placed variant ranks #{best_rank} of '
         f'{n_scored}.'
     ) if gpt_best else ''
     gpt_section = (
@@ -723,9 +786,9 @@ the profile becomes more uneven. The practical consequences:</p>
 <ul>
 <li><strong>A weak benchmark cannot be averaged away.</strong> The exponential weights
 e<sup>−z</sup> concentrate on the model's <em>worst</em> results. The discount is not
-cosmetic: a model with seven benchmarks at z&nbsp;=&nbsp;+1.5 and one at z&nbsp;=&nbsp;−0.8
-scores 0.75 — below a model that is merely even at z&nbsp;=&nbsp;+1.0 everywhere, despite
-the first model's higher mean (1.21 vs 1.0), because the soft-minimum punishes the
+cosmetic: a model with six benchmarks at z&nbsp;=&nbsp;+1.5 and one at z&nbsp;=&nbsp;−0.8
+scores 0.67 — below a model that is merely even at z&nbsp;=&nbsp;+1.0 everywhere, despite
+the first model's higher mean (1.17 vs 1.0), because the soft-minimum punishes the
 imbalance by more than the mean gap.</li>
 <li><strong>Balanced excellence is rewarded; lopsided excellence is discounted.</strong></li>
 <li><strong>Every score covers the same ground.</strong> Because only fully-benched models
