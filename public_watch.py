@@ -132,7 +132,8 @@ def _fetch_cost_breakdown(records, max_age_h=12):
                 ev = iic.get('evaluations') if isinstance(iic, dict) else None
                 if not isinstance(ev, list) or not ev:
                     continue
-                split = {e['slug']: e['weightedCostPerTask'] for e in ev
+                split = {COST_SLUG_ALIASES.get(e['slug'], e['slug']):
+                         e['weightedCostPerTask'] for e in ev
                          if isinstance(e, dict) and isinstance(e.get('slug'), str)
                          and isinstance(e.get('weightedCostPerTask'), (int, float))}
                 if II_COST_SLUGS <= set(split):
@@ -176,6 +177,11 @@ PAGES = {
 II_COST_SLUGS = {'gdpval-aa', 'automationbench-aa', 'terminalbench-v4-0',
                  'artificial-analysis-long-context-reasoning', 'aa-briefcase'}
 
+# Carrier-payload slug aliases (AA renames slugs without notice; the canonical
+# slug is the II_COST_SLUGS member). 2026-09-16: /models carrier payload
+# renamed terminalbench-v4-0 -> terminalbench-4-0.
+COST_SLUG_ALIASES = {'terminalbench-4-0': 'terminalbench-v4-0'}
+
 II_TABLE_NAMES = {
     'GDPval-AA v2': 'gdpval-aa', '𝜏³-Banking': 'tau3-banking',
     'SciCode': 'scicode',
@@ -190,6 +196,8 @@ II_TABLE_NAMES = {
     # AA v5 (2026-09-07): new II members (cost weights only, not scored).
     'AutomationBench-AA': 'automationbench-aa',
     'Terminal-Bench v4.0': 'terminalbench-v4-0',
+    # AA 2026-09-16: methodology table dropped the 'v' ('Terminal-Bench 4.0').
+    'Terminal-Bench 4.0': 'terminalbench-v4-0',
 }
 
 
@@ -317,7 +325,10 @@ def scrape(max_age_h=12, ii_weights=None):
     FIELD_MAP = {
         'hle': 'hle', 'scicode': 'scicode', 'critpt': 'critpt',
         'omniscience': 'omniscience', 'lcr': 'lcr',
-        'terminalbench_v40': 'terminalbenchV40',
+        # AA 2026-09-16: leaderboard payload renamed terminalbenchV40 ->
+        # terminalBench40 (verified live: 162 numeric under the new key, 0
+        # under the old).
+        'terminalbench_v40': 'terminalBench40',
         'intelligence_index_v4_1': 'intelligenceIndex',
         'analystAgent': 'analystAgent',  # watch-only (not scored; see _watch_analyst_agent)
     }
