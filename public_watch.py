@@ -114,20 +114,31 @@ MODELS_DIR = 'https://artificialanalysis.ai/models/'
 
 def _fetch_cost_breakdown(records, max_age_h=12):
     """{model_slug: {eval_slug: weightedCostPerTask}} + carrier slug.
- +
-    Tries the first few leaderboard slugs alphabetically; the first page
-    whose embedded table parses to a complete split wins. Dies on total
-    failure (fail-closed: no live split, no publish)."""
+
+    Tries the first few leaderboard slugs alphabetically and keeps the
+    richest complete split (best-of-5). A carrier cached before new models
+    landed parses fine but silently drops them, so any carrier whose
+    record count trails the leaderboard is force-refetched once. Dies on
+    total failure (fail-closed: no live split, no publish)."""
     errs = []
+    best, best_cand = None, None
     for cand in sorted(records)[:5]:
         try:
             raw = fetch(MODELS_DIR + cand, DATA / f'model-cost-{cand}.html', max_age_h)
+            recs = extract_records(flight(raw))
+            if len(recs) < len(records):
+                try:
+                    raw = fetch(MODELS_DIR + cand, DATA / f'model-cost-{cand}.html', 0)
+                    recs = extract_records(flight(raw))
+                except Exception as e:
+                    errs.append(f'{cand}: refresh failed: {e}')
+                    continue
         except Exception as e:
             errs.append(f'{cand}: {e}')
             continue
         try:
             costmap = {}
-            for s, rec in extract_records(flight(raw)).items():
+            for s, rec in recs.items():
                 iic = rec.get('intelligenceIndexCostPerTask')
                 ev = iic.get('evaluations') if isinstance(iic, dict) else None
                 if not isinstance(ev, list) or not ev:
@@ -138,11 +149,14 @@ def _fetch_cost_breakdown(records, max_age_h=12):
                          and isinstance(e.get('weightedCostPerTask'), (int, float))}
                 if II_COST_SLUGS <= set(split):
                     costmap[s] = split
-            if costmap:
-                return costmap, cand
-            errs.append(f'{cand}: 0 complete splits parsed')
+            if costmap and (best is None or len(costmap) > len(best)):
+                best, best_cand = costmap, cand
+            if not costmap:
+                errs.append(f'{cand}: 0 complete splits parsed')
         except Exception as e:
             errs.append(f'{cand}: {e}')
+    if best:
+        return best, best_cand
     print(f'FATAL: no /models carrier page yielded a cost split '
           f'({"; ".join(errs)}). Refusing to publish costs without live '
           f'per-benchmark data.', file=sys.stderr)
