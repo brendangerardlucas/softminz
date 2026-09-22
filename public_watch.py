@@ -30,8 +30,8 @@ in the global table on every /models/<slug> page; the leaderboard payload
 carries only the aggregate total, used here as a cross-check). We divide
 each weighted cost by the benchmark's Intelligence Index weight to recover
 the unweighted cost, then average over the five benchmarks that represent
-real agentic workflow spend (GDPval-AA v2, AutomationBench-AA,
-Terminal-Bench v4.0, AA-LCR v1.1, AA-Briefcase), weighted by task count:
+real agentic workflow spend (GDPval-AA v2.1, AutomationBench-AA,
+Terminal-Bench v4.0, AA-LCR v1.1, AA-Briefcase v1.1), weighted by task count:
 
     C_task = sum_b C_b * T_b / sum_b T_b
 """
@@ -66,10 +66,10 @@ REPO_URL = 'https://github.com/brendangerardlucas/softminz'
 # The scoring battery: seven benchmarks, chosen for relevance to scientific
 # computing. (LiveCodeBench was in the battery until 2026-08-18, when
 # Artificial Analysis dropped it. Terminal-Bench Hard -> v2.1 on 2026-09-05;
-# v2.1 -> v4.0 on 2026-09-07 when AA's Intelligence Index v5 adopted it.
+# v2.1 -> v4.0 on 2026-09-07 when AA's Intelligence Index v4.3 adopted it.
 # GPQA Diamond was dropped 2026-09-07 (user directive: nothing the II has
 # dropped stays in softminz, scored or on the cost axis — GPQA left the II
-# in AA's v4.2 revision). tau3-banking left the II in v5 and is likewise
+# in AA's v4.2 revision). tau3-banking left the II in v4.3 and is likewise
 # gone from both the battery and the cost axis.)
 # ---------------------------------------------------------------------------
 MATHSCI = ['critpt', 'hle', 'omniscience']                    # science & knowledge
@@ -169,10 +169,10 @@ PAGES = {
 # Which benchmarks represent agentic workflow cost (II_COST_SLUGS) is an
 # IDENTITY choice, not a weight, so it is pinned here and does not drift
 # when AA revises the methodology.
-# II v5 (2026-09-07): the cost axis tracks what the CURRENT II weights —
+# II v4.3 (2026-09-07): the cost axis tracks what the CURRENT II weights —
 # benchmark dropped from the II = dropped from the cost axis too. GPQA
 # (left II in v4.2), tau3-banking and Terminal-Bench v2.1 (both left in
-# v5) are gone. AutomationBench-AA and AA-Briefcase feed COST weights
+# v4.3) are gone. AutomationBench-AA and AA-Briefcase feed COST weights
 # only — deliberately never scored (user directive 2026-09-07).
 II_COST_SLUGS = {'gdpval-aa', 'automationbench-aa', 'terminalbench-v4-0',
                  'artificial-analysis-long-context-reasoning', 'aa-briefcase'}
@@ -183,7 +183,10 @@ II_COST_SLUGS = {'gdpval-aa', 'automationbench-aa', 'terminalbench-v4-0',
 COST_SLUG_ALIASES = {'terminalbench-4-0': 'terminalbench-v4-0'}
 
 II_TABLE_NAMES = {
-    'GDPval-AA v2': 'gdpval-aa', '𝜏³-Banking': 'tau3-banking',
+    'GDPval-AA v2': 'gdpval-aa',
+    # AA v4.3.2 (2026-09-22): methodology table bumped to 'GDPval-AA v2.1'
+    # (220 tasks, Elo anchored to DeepSeek V4.1 Flash at 1600, Crowd-BT).
+    'GDPval-AA v2.1': 'gdpval-aa', '𝜏³-Banking': 'tau3-banking',
     'SciCode': 'scicode',
     "HLE (Humanity's Last Exam)": 'humanitys-last-exam',
     'CritPt': 'critpt',
@@ -192,8 +195,11 @@ II_TABLE_NAMES = {
     'AA-LCR v1.1': 'artificial-analysis-long-context-reasoning',
     'AA-LCR': 'artificial-analysis-long-context-reasoning',
     # AA v4.2 new benchmarks (mapped even though not scored).
-    'AA-Briefcase': 'aa-briefcase', 'GDP.pdf': 'gdp-pdf',
-    # AA v5 (2026-09-07): new II members (cost weights only, not scored).
+    # AA v4.3.2 (2026-09-22): cost-only Agents eval versioned to v1.1
+    # (91 tasks across 4 scenarios, anchor GPT-5.5 medium at 1000, Crowd-BT).
+    'AA-Briefcase': 'aa-briefcase', 'AA-Briefcase v1.1': 'aa-briefcase',
+    'GDP.pdf': 'gdp-pdf',
+    # AA v4.3 (2026-09-07): new II members (cost weights only, not scored).
     'AutomationBench-AA': 'automationbench-aa',
     'Terminal-Bench v4.0': 'terminalbench-v4-0',
     # AA 2026-09-16: methodology table dropped the 'v' ('Terminal-Bench 4.0').
@@ -343,7 +349,7 @@ def scrape(max_age_h=12, ii_weights=None):
                 counts[f] += 1
         # non-hallucination rate (battery TRUST field): flat payload key
         # primary; derived fallback 1 - breakdown.total.hallucinationRate
-        # (AA v5 shells sometimes drop the flat key).
+        # (AA v4.3+ shells sometimes drop the flat key).
         nhr = rec.get('omniscienceNonHallucination')
         if not isinstance(nhr, (int, float)):
             ob = rec.get('omniscienceBreakdown')
@@ -829,11 +835,11 @@ index has abandoned no longer earns a place here.
 <strong><a href="https://artificialanalysis.ai/evaluations/tau3-banking">τ³-Banking</a>
 is excluded from the performance calculation</strong> because it
 simulates fintech customer support — a domain-specific agent task whose skill profile says
-nothing about scientific capability; it too left the Intelligence Index in AA's v5 revision
+nothing about scientific capability; it too left the Intelligence Index in AA's v4.3 revision
 and is now excluded everywhere on this page.
-<strong><a href="https://artificialanalysis.ai/evaluations/gdpval-aa">GDPval-AA v2</a>,
+<strong><a href="https://artificialanalysis.ai/evaluations/gdpval-aa">GDPval-AA v2.1</a>,
 <a href="https://artificialanalysis.ai/evaluations/automationbench-aa">AutomationBench-AA</a>
-and AA-Briefcase are likewise excluded from scoring:</strong> they measure professional
+and AA-Briefcase v1.1 are likewise excluded from scoring:</strong> they measure professional
 deliverables and workflow automation, not scientific computing — though they remain in the
 cost model below as agentic workload.</p>
 
@@ -845,8 +851,8 @@ comes from the priced-models table embedded in AA's model pages (the leaderboard
 payload carries only the aggregate total, which we use as a cross-check: the split
 must sum to the published total or the run fails). Dividing that by the benchmark's
 Intelligence Index weight recovers the unweighted per-benchmark cost C<sub>b</sub>; the five
-benchmarks that represent agentic workload — GDPval-AA v2, AutomationBench-AA,
-Terminal-Bench v4.0, AA-LCR v1.1 and AA-Briefcase — are then averaged weighted by task
+benchmarks that represent agentic workload — GDPval-AA v2.1, AutomationBench-AA,
+Terminal-Bench v4.0, AA-LCR v1.1 and AA-Briefcase v1.1 — are then averaged weighted by task
 count:</p>
 <div class="math">C<sub>task</sub> = Σ<sub>b</sub> C<sub>b</sub> T<sub>b</sub> / Σ<sub>b</sub> T<sub>b</sub></div>
 <p>This is the total cost of running these 5 benchmarks divided by the number of tasks
@@ -865,15 +871,17 @@ cost axis and the Pareto frontier; that is a data-availability gap, not a zero p
 normalised benchmark scores:</p>
 <div class="math">II = Σ<sub>b</sub> w<sub>b</sub> · s<sub>b</sub></div>
 <p>with category weights Agents 30%, Coding 20%, Scientific Reasoning 20%, General 30%,
-and per-benchmark weights AA-Briefcase 15%, GDPval-AA v2 10%, AutomationBench-AA 5%,
+and per-benchmark weights AA-Briefcase v1.1 15%, GDPval-AA v2.1 10%, AutomationBench-AA 5%,
 Terminal-Bench v4.0 10%, SciCode 10%, HLE 10%, GDP.pdf 10%, CritPt 10%,
 AA-Omniscience 15% (split: 10% accuracy + 5% non-hallucination) and AA-LCR v1.1 5%
 (per the live-parsed
-<a href="{II_METHOD_URL}">AA methodology page</a>, Intelligence Index v5, September 2026).
-The v5 revision <strong>dropped τ³-Banking from the Index</strong> (replaced by
-AutomationBench-AA at 5%) and <strong>upgraded Terminal-Bench v2.1 to v4.0</strong>
-(a table reset — v4.0 scores exist for only a fraction of models so far, which shrinks
+<a href="{II_METHOD_URL}">AA methodology page</a>, Intelligence Index v4.3.2, September 2026).
+The v4.3 revision <strong>replaced τ³-Banking with AutomationBench-AA</strong> (5%)
+and <strong>upgraded Terminal-Bench v2.1 to v4.0</strong>
+(a table reset in progress — v4.0 scores exist for only a fraction of models so far, which shrinks
 every fully-benched cohort on this page until AA finishes re-running models);
+the v4.3.2 revision <strong>re-anchored the two Elo benchmarks</strong> (GDPval-AA v2.1 to
+DeepSeek V4.1 Flash at 1600, AA-Briefcase v1.1 Crowd-BT fits) and refreshed judge panels;
 the numbers below track the current revision on every run.</p>
 <p>It is a useful headline, but for scientific work it has real flaws:</p>
 <ul>
@@ -886,7 +894,7 @@ punishes and an average does not.</li>
 5% of the total weight inside AA-Omniscience's 15% share. Here it is a mandatory benchmark
 and a dominant term whenever it is bad.</li>
 <li><strong>The weighting emphasises generalist agentic work, not science.</strong> Agents
-plus the generalist members — AA-Briefcase (15%), GDP.pdf (10%) and now
+plus the generalist members — AA-Briefcase v1.1 (15%), GDP.pdf (10%) and now
 AutomationBench-AA (5%) — put roughly half the Index on knowledge-work and business
 deliverables, while GPQA Diamond, the one graduate-science benchmark, has been gone
 since the v4.2 revision. The skill mix measures office work, not scientific
