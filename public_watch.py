@@ -611,7 +611,8 @@ def make_chart(ranked, front, out_path):
                    label=f'{i + 1}. {r["name"][:40]}  (${r["cost_task"]:.3f})')
     ax.set_xscale('log')
     ax.set_xlabel('Agentic cost per task (USD, log scale)')
-    ax.set_ylabel('SoftMinZ = −ln⟨e$^{−z}$⟩ (soft-min of battery z-scores)')
+    ax.set_ylabel(r'SoftMinZ = $-\ln\left[\frac{1}{n}\sum_{b} e^{-z_b}\right]$'
+                  ' (soft-min of battery z-scores)')
     ax.set_title('SoftMinZ vs cost per agentic task', fontweight='bold',
                  loc='left', fontsize=12)
     ax.xaxis.set_major_formatter(FuncFormatter(
