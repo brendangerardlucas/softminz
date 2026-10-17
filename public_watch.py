@@ -162,8 +162,8 @@ def _fetch_cost_breakdown(records, max_age_h=12):
           f'per-benchmark data.', file=sys.stderr)
     sys.exit(1)
 
-# Per-evaluation pages are still fetched for their JSON-LD ground-truth
-# blocks (top-20 scores each), which cross-validate the leaderboard scrape:
+# Per-evaluation pages cross-check the leaderboard scrape using JSON-LD
+# score rows or, when absent, their model payloads:
 # page slug -> (payload field, JSON-LD label).
 PAGES = {
     'humanitys-last-exam': ('hle', "Humanity's Last Exam"),
@@ -224,8 +224,8 @@ II_TABLE_NAMES = {
 # ---------------------------------------------------------------------------
 # Scraping helpers (AA publishes per-model records inside Next.js flight
 # payloads; each model is one nested JSON object, so fields can never leak
-# between models. Every score is cross-validated against the page's JSON-LD
-# Score block before being accepted.)
+# between models. Overlapping evaluation-page scores cross-check the
+# leaderboard values; missing comparison data is reported explicitly.)
 # ---------------------------------------------------------------------------
 def fetch(url, cache_path, max_age_h=12):
     p = pathlib.Path(cache_path)
@@ -376,11 +376,14 @@ def scrape(max_age_h=12, ii_weights=None):
         if isinstance(nhr, (int, float)):
             models[s]['non_hallucination_rate'] = float(nhr)
             counts['non_hallucination_rate'] += 1
-        # leaderboard cost.total is an II-weighted aggregate, not the
+        # leaderboard cost is an II-weighted aggregate, not the
         # per-benchmark split: keep it only as a cross-check of the split
         # fetched below (sum of split must equal the published total).
         iic = rec.get('intelligenceIndexCostPerTask')
-        if isinstance(iic, dict) and isinstance(iic.get('cost'), dict):
+        if isinstance(iic, (int, float)):
+            # AA now emits the total directly as a numeric field.
+            models[s]['_ii_cost_total'] = float(iic)
+        elif isinstance(iic, dict) and isinstance(iic.get('cost'), dict):
             tot = iic['cost'].get('total')
             if isinstance(tot, (int, float)):
                 models[s]['_ii_cost_total'] = float(tot)
@@ -419,12 +422,21 @@ def scrape(max_age_h=12, ii_weights=None):
         f'{len(records)} records — '
         + ', '.join(f'{f}:{counts[f]}' for f in FIELD_MAP if counts[f]))
 
-    # --- cross-validation: JSON-LD ground-truth blocks on the per-evaluation
-    # pages (top-20 scores each). Mismatches reject that benchmark's values.
+    # --- cross-validation: JSON-LD score rows when available; otherwise
+    # the evaluation page's own model payload. AA's JSON-LD now sometimes
+    # contains only Dataset metadata, without any numeric score rows.
+    # Mismatches reject that benchmark's values.
     for slug, (field, label) in PAGES.items():
         try:
             raw = fetch(BASE + slug, DATA / f'{slug}.html', max_age_h)
             truth = jsonld_scores(raw, label)
+            source = 'JSON-LD'
+            if not truth:
+                key = FIELD_MAP[field]
+                truth = {s: rec[key]
+                         for s, rec in extract_records(flight(raw)).items()
+                         if isinstance(rec.get(key), (int, float))}
+                source = 'evaluation-page payload (JSON-LD score rows unavailable)'
             checked = bad = 0
             for s, exp in truth.items():
                 got = models.get(s, {}).get(field)
@@ -435,12 +447,14 @@ def scrape(max_age_h=12, ii_weights=None):
                     bad += 1
             if checked and bad:
                 # reject: strip this field from every model rather than
-                # publish scores that disagree with AA's own ground truth
+                # publish scores that disagree with AA's evaluation page
                 for s in models:
                     models[s].pop(field, None)
-                report[slug] = f'REJECTED ({bad}/{checked} mismatched vs JSON-LD)'
+                report[slug] = f'REJECTED ({bad}/{checked} mismatched vs {source})'
+            elif not checked:
+                report[slug] = 'validation UNAVAILABLE (no overlapping source scores)'
             else:
-                report[slug] = f'validated ({checked} checked)'
+                report[slug] = f'validated ({checked} checked vs {source})'
         except Exception as e:
             report[slug] = f'validation FAILED: {e}'
         time.sleep(0.5)
@@ -922,8 +936,10 @@ values are not perfectly comparable across model vintages.</li>
 {gpt_section}
 
 <h2>Reproducibility</h2>
-<p class="note">Every scraped score is cross-validated against the JSON-LD metadata on its
-source page; a benchmark whose parsed values disagree is rejected rather than published.
+<p class="note">Scraped scores are cross-checked against overlapping scores on each
+evaluation page, using JSON-LD score rows when available and the evaluation-page model
+payload otherwise. A benchmark whose parsed values disagree is rejected rather than
+published; missing comparison data is reported as unavailable, never as validated.
 Intelligence Index weights and task counts used in the cost model are parsed live from
 the <a href="{II_METHOD_URL}">AA methodology page</a> on every run (today: {esc(ii_source)});
 if that page is unreachable or its table cannot be parsed, the run aborts rather than
@@ -954,7 +970,8 @@ def main():
     models, report = scrape(ii_weights=ii_weights)
     print(f'{len(models)} models scraped', file=sys.stderr)
     _watch_analyst_agent(models)
-    rejected = [k for k, v in report.items() if 'REJECTED' in str(v) or 'FAILED' in str(v)]
+    rejected = [k for k, v in report.items()
+                if any(status in str(v) for status in ('REJECTED', 'FAILED', 'UNAVAILABLE'))]
     if rejected:
         print('WARNING: rejected/failed pages:', ', '.join(rejected), file=sys.stderr)
 

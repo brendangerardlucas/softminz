@@ -1,7 +1,7 @@
 # LLM Index for Scientific Computing
 
 A daily, fully automated watch that ranks frontier LLMs by **SoftMinZ** — a
-soft-minimum performance index over a nine-benchmark battery chosen for
+soft-minimum performance index over a seven-benchmark battery chosen for
 relevance to **scientific computing** — against **raw cost per agentic task**.
 
 The output is a single self-contained webpage, published via GitHub Pages:
@@ -11,11 +11,13 @@ methodology.
 ## What it does
 
 1. **Scrapes [Artificial Analysis](https://artificialanalysis.ai)** — free, no
-   API key. Every score is cross-validated against the page's JSON-LD
-   metadata; benchmarks whose parsed values disagree are rejected, not
-   published. Intelligence Index weights used by the cost model are verified
+   API key. Overlapping scores are cross-checked against each evaluation
+   page's JSON-LD score rows, or its model payload when those rows are absent.
+   Mismatched benchmarks are rejected; unavailable checks are reported.
+   Intelligence Index weights used by the cost model are verified
    against AA's methodology page on every run.
-2. **Z-scores** each battery benchmark across all measured models.
+2. **Z-scores** each battery benchmark across the same strictly complete cohort.
+   Models missing any battery benchmark neither receive a score nor affect the z-score pools.
 3. **SoftMinZ**:
 
    ```
@@ -28,24 +30,23 @@ methodology.
    and a weak trust measurement cannot be bought off by strong quiz scores.
 4. **Cost per agentic task** from raw AA cost data only (no discounts, no
    free tiers, no portal pricing): the Intelligence Index weighted costs are
-   de-weighted and averaged over the four agentic-workload benchmarks
-   (GDPval-AA v2, τ³-Banking, Terminal-Bench v2.1, AA-LCR), weighted by task
-   count.
+   de-weighted and averaged over five agentic-workload benchmarks
+   (GDPval-AA, AutomationBench-AA, Terminal-Bench v4.0, AA-LCR, AA-Briefcase),
+   weighted by task count using the live AA methodology table.
 5. **Emits `docs/index.html`** — chart, the full ranking in two toggleable
    views (by SoftMinZ and by cost), and the methodology — as one file with
    no external assets.
 
 ## Battery
 
-Scored (9): GPQA Diamond, CritPt, Humanity's Last Exam, AA-Omniscience,
-SciCode, LiveCodeBench, Terminal-Bench Hard, non-hallucination rate, AA-LCR.
+Scored (7): CritPt, Humanity's Last Exam, AA-Omniscience, SciCode,
+Terminal-Bench v4.0, non-hallucination rate, and AA-LCR.
 
-Excluded from scoring: **τ³-Banking** (fintech customer support is not
-scientific capability), though it remains in the cost model as an agentic
-workload.
-
-Exclusion gates: a model must be measured on ≥ 7 of 9 benchmarks and must
-have both CritPt and non-hallucination rate, or it is not scored at all.
+A model must be measured on **every** battery benchmark to be scored or
+contribute to the z-score pools. Z-scores use sample standard deviations.
+AutomationBench-AA and AA-Briefcase are cost-only; AnalystAgent is watch-only.
+GPQA Diamond, LiveCodeBench, τ³-Banking and Terminal-Bench v2.1 are no longer
+part of either axis.
 
 ## Run it
 
