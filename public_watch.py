@@ -322,6 +322,28 @@ def jsonld_scores(raw, label):
     return truth
 
 
+# AA 2026-10-26: leaderboard benchmark values moved into a slug-keyed
+# scores object; evaluation pages still carry the legacy flat fields.
+SCORE_SLUGS = {
+    'hle': 'humanitys-last-exam',
+    'scicode': 'scicode',
+    'critpt': 'critpt',
+    'terminalBench40': 'terminalbench-4-0',
+    'lcr': 'artificial-analysis-long-context-reasoning',
+    'omniscienceNonHallucination': 'omniscience-non-hallucination',
+    'analystAgent': 'aa-analyst-agent',
+}
+
+
+def _score_value(record, key):
+    """Read a benchmark from either AA payload shape without inventing data."""
+    value = record.get(key)
+    if not isinstance(value, (int, float)):
+        scores = record.get('scores')
+        value = scores.get(SCORE_SLUGS.get(key, key)) if isinstance(scores, dict) else None
+    return value if isinstance(value, (int, float)) else None
+
+
 def scrape(max_age_h=12, ii_weights=None):
     models = collections.defaultdict(dict)
     report = {}
@@ -357,14 +379,14 @@ def scrape(max_age_h=12, ii_weights=None):
         nm = rec.get('name') or rec.get('shortName') or s
         models[s].setdefault('name', nm)
         for f, key in FIELD_MAP.items():
-            v = rec.get(key)
+            v = _score_value(rec, key)
             if isinstance(v, (int, float)):
                 models[s][f] = float(v)
                 counts[f] += 1
         # non-hallucination rate (battery TRUST field): flat payload key
         # primary; derived fallback 1 - breakdown.total.hallucinationRate
         # (AA v4.3+ shells sometimes drop the flat key).
-        nhr = rec.get('omniscienceNonHallucination')
+        nhr = _score_value(rec, 'omniscienceNonHallucination')
         if not isinstance(nhr, (int, float)):
             ob = rec.get('omniscienceBreakdown')
             if isinstance(ob, dict):
@@ -433,9 +455,9 @@ def scrape(max_age_h=12, ii_weights=None):
             source = 'JSON-LD'
             if not truth:
                 key = FIELD_MAP[field]
-                truth = {s: rec[key]
+                truth = {s: value
                          for s, rec in extract_records(flight(raw)).items()
-                         if isinstance(rec.get(key), (int, float))}
+                         if (value := _score_value(rec, key)) is not None}
                 source = 'evaluation-page payload (JSON-LD score rows unavailable)'
             checked = bad = 0
             for s, exp in truth.items():
@@ -973,10 +995,15 @@ def main():
     rejected = [k for k, v in report.items()
                 if any(status in str(v) for status in ('REJECTED', 'FAILED', 'UNAVAILABLE'))]
     if rejected:
-        print('WARNING: rejected/failed pages:', ', '.join(rejected), file=sys.stderr)
+        print('FATAL: rejected/failed/unavailable pages:', ', '.join(rejected), file=sys.stderr)
+        raise SystemExit(1)
 
     ranked, all_rows, zstats = zscore_battery(models)
     print(f'scored (battery-passing): {len(ranked)} of {len(all_rows)}', file=sys.stderr)
+    if not ranked or set(zstats) != set(BATTERY):
+        print('FATAL: no complete scored cohort/statistics; preserving published artifacts.',
+              file=sys.stderr)
+        raise SystemExit(1)
 
     front = pareto(ranked, 'cost_task', 'softminz')
     print(f'pareto frontier: {len(front)} models', file=sys.stderr)

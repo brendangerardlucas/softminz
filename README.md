@@ -13,7 +13,10 @@ methodology.
 1. **Scrapes [Artificial Analysis](https://artificialanalysis.ai)** — free, no
    API key. Overlapping scores are cross-checked against each evaluation
    page's JSON-LD score rows, or its model payload when those rows are absent.
-   Mismatched benchmarks are rejected; unavailable checks are reported.
+   Supports both legacy flat score fields and AA's nested, slug-keyed
+   `scores` payload. Mismatched benchmarks are rejected; failed or unavailable
+   required checks abort generation before replacing published artifacts.
+   An empty cohort or incomplete z-score statistics likewise aborts.
    Intelligence Index weights used by the cost model are verified
    against AA's methodology page on every run.
 2. **Z-scores** each battery benchmark across the same strictly complete cohort.
@@ -56,6 +59,8 @@ python3 public_watch.py
 
 Dependencies: Python 3.10+, matplotlib. Output: `docs/index.html`.
 A scrape cache (`data/`) makes reruns within 12 hours instant.
+
+Offline regression tests: `python3 -m unittest -v test_public_watch`.
 
 ## Publishing to GitHub Pages
 
