@@ -46,6 +46,27 @@ fill missing measurements for the named versions or hard subset. **The new score
 or the initial six-component v5 version that used the combined Omniscience Index.** AnalystAgent remains
 watch-only, never silently added to the seven-component score.
 
+## Head-to-head comparison
+
+Below the ranking tables, choose **Model A** and **Model B** to compare every
+scored model, including those without a published cost. The panel shows both
+models’ seven component z-scores and **Δz = A − B**: positive favors A, negative
+favors B. Swap models to reverse the comparison; selecting the same model gives
+zero deltas. Native labeled selectors support keyboard navigation.
+
+The comparison uses the **same complete-cohort normalization as the rankings**.
+Selecting a pair never recomputes its z-scores. Deltas use full-precision z-scores
+before formatting to three decimals, not subtraction of rounded display values.
+Near-zero differences can display as zero; these are SD units, not significance
+tests. Mean z, worst z, SoftMinZ and published cost are summarized below.
+
+The default is GPT-6 Astra High versus Claude Opus 5.5 Max when available, otherwise
+two ranked models. The default table is server-rendered and readable without
+JavaScript; changing selections requires JavaScript. All data and vanilla browser
+code are embedded in the single generated HTML page: no dependencies, backend
+comparison endpoint or selection-time network requests. The existing ranking
+buttons still work without JavaScript.
+
 ## Cost: expensive workloads, same formula
 
 Cost is a separate subset, fixed across models:
@@ -105,11 +126,13 @@ log-cost plot or Pareto frontier. The generated page reports actual priced cover
 
 ## Run and test
 
-Requires Python 3.10+ and matplotlib. No AA API key.
+Generation requires Python 3.10+, matplotlib and the bundled `head_to_head.js`
+source file. No AA API key. Node.js is optional for the browser-code unit tests.
 
 ```bash
 TZ=UTC python3 public_watch.py --fresh
 python3 -m unittest -v test_public_watch
+node --test test_head_to_head.js
 ```
 
 `--fresh` bypasses every source cache. Without it, the scrape cache in `data/` has

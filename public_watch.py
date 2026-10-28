@@ -755,6 +755,110 @@ def fmt_cost(v):
     return '—' if v is None else f'${v:.4f}'
 
 
+CSS += """
+#head-to-head { scroll-margin-top:20px; }
+#h2h-controls { border:0; padding:0; margin:0 0 12px; min-width:0; }
+#h2h-controls legend { font-weight:600; margin-bottom:8px; }
+.h2h-controls { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto; gap:12px; align-items:end; }
+.h2h-controls label { display:block; min-width:0; font-size:14px; font-weight:600; }
+.h2h-controls select { display:block; width:100%; max-width:100%; min-width:0; margin-top:5px; padding:10px 8px; min-height:44px; font:inherit; background:white; color:var(--ink); border:1px solid var(--line); border-radius:6px; }
+.h2h-controls button { min-height:44px; padding:9px 14px; font:inherit; cursor:pointer; border:1px solid var(--accent); border-radius:6px; background:var(--accent); color:white; }
+.h2h-controls :focus-visible { outline:3px solid #2580c5; outline-offset:2px; }
+.h2h-wrap { overflow-x:auto; border:1px solid var(--line); border-radius:8px; margin:12px 0; }
+.h2h-wrap table { min-width:600px; }
+.h2h-wrap caption { text-align:left; padding:9px 12px; font-weight:600; }
+.h2h-wrap tbody th { text-align:left; font-weight:500; padding:6px 12px; border-bottom:1px solid var(--line); }
+.h2h-positive { color:#096136; font-weight:700; }
+.h2h-negative { color:#a12832; font-weight:700; }
+.h2h-tie { color:var(--mut); }
+@media (max-width:700px) { .h2h-controls { grid-template-columns:minmax(0,1fr); } }
+"""
+
+
+def comparison_data(ranked):
+    """Export full-precision ranking-cohort z-scores, never pair-normalize."""
+    models = []
+    for row in ranked:
+        zs = [float(row['zscores'][b]) for b in BATTERY]
+        models.append({'slug': str(row['slug']), 'name': str(row['name']), 'z': zs,
+                       'mean_z': statistics.mean(zs), 'worst_z': min(zs),
+                       'softminz': row['softminz'], 'cost_task': row.get('cost_task')})
+    slugs = {m['slug'] for m in models}
+    default_a = 'gpt-6-astra-high' if 'gpt-6-astra-high' in slugs else (models[0]['slug'] if models else None)
+    default_b = 'claude-opus-5-5' if 'claude-opus-5-5' in slugs and default_a != 'claude-opus-5-5' else next(
+        (m['slug'] for m in models if m['slug'] != default_a), default_a)
+    return {'cohort_size': len(models), 'generated': TODAY,
+            'components': [{'key': b, 'label': BENCH_LABEL[b]} for b in BATTERY],
+            'models': models, 'default_a': default_a, 'default_b': default_b}
+
+
+def _comparison_number(value, signed=False, places=3):
+    value = 0. if abs(value) < .5 * 10 ** (-places) else value
+    text = f'{value:.{places}f}'.replace('-', '−')
+    return ('+' if signed and value > 0 else '') + text
+
+
+def render_head_to_head(ranked):
+    data = comparison_data(ranked)
+    if not data['models']:
+        return ''
+    by_slug = {m['slug']: m for m in data['models']}
+    a, b = by_slug[data['default_a']], by_slug[data['default_b']]
+    ordered = sorted(data['models'], key=lambda m: (m['name'].casefold(), m['slug']))
+    def options(selected):
+        return ''.join(f'<option value="{esc(m["slug"])}"'
+                       + (' selected' if m['slug'] == selected else '')
+                       + f'>{esc(m["name"])}</option>' for m in ordered)
+    rows = []
+    for component, az, bz in zip(data['components'], a['z'], b['z']):
+        delta = az - bz
+        cls = 'h2h-tie' if abs(delta) < .0005 else 'h2h-positive' if delta > 0 else 'h2h-negative'
+        winner = 'tie at displayed precision' if cls == 'h2h-tie' else 'favors ' + (a['name'] if delta > 0 else b['name'])
+        display = _comparison_number(delta, signed=True)
+        rows.append(f'<tr data-component="{esc(component["key"])}"><th scope="row">{esc(component["label"])}</th>'
+                    f'<td class="num">{_comparison_number(az)}</td><td class="num">{_comparison_number(bz)}</td>'
+                    f'<td class="num {cls}" aria-label="{esc(display + ", " + winner)}">{display}</td></tr>')
+    summary = []
+    for key, label, places in [('mean_z', 'Mean z', 3), ('worst_z', 'Worst z', 3), ('softminz', 'SoftMinZ', 2), ('cost_task', 'Cost per task', 4)]:
+        tag = {'mean_z':'mean', 'worst_z':'worst', 'softminz':'score', 'cost_task':'cost'}[key]
+        cells = []
+        for side, model in [('a',a),('b',b)]:
+            value = fmt_cost(model[key]) if key == 'cost_task' else _comparison_number(model[key], places=places)
+            cells.append(f'<td class="num" id="h2h-{tag}-{side}">{value}</td>')
+        summary.append(f'<tr><th scope="row">{label}</th>' + ''.join(cells) + '</tr>')
+    # Escape raw-text script delimiters, then use only textContent in the client.
+    payload = json.dumps(data, ensure_ascii=True, allow_nan=False, separators=(',', ':'))
+    payload = payload.replace('<', r'\u003c').replace('>', r'\u003e').replace('&', r'\u0026')
+    script = (HERE / 'head_to_head.js').read_text()
+    return f'''<section id="head-to-head" aria-labelledby="h2h-title">
+<h2 id="h2h-title">Head-to-head comparison</h2>
+<p class="note">Choose any two scored models, including models without cost data.
+All z-scores use the same {data['cohort_size']}-model complete cohort as the ranking;
+selecting a pair does not recalculate the normalization.</p>
+<fieldset id="h2h-controls" disabled><legend>Choose models</legend>
+<div class="h2h-controls">
+<label for="h2h-model-a">Model A<select id="h2h-model-a" name="model-a">{options(a['slug'])}</select></label>
+<label for="h2h-model-b">Model B<select id="h2h-model-b" name="model-b">{options(b['slug'])}</select></label>
+<button type="button" id="h2h-swap">Swap models</button>
+</div></fieldset>
+<p><strong>Δz = Model A − Model B.</strong> Positive favors A; negative favors B.
+Differences use unrounded z-scores, displayed to three decimals. These are standard-deviation units, not significance tests.</p>
+<p id="h2h-status" class="note" role="status" aria-live="polite" aria-atomic="true">Comparing {esc(a['name'])} against {esc(b['name'])}.</p>
+<div class="h2h-wrap" role="region" aria-label="Head-to-head component table" tabindex="0">
+<table><caption>Standardized component scores</caption><thead><tr><th scope="col">Component</th>
+<th scope="col" class="num" id="h2h-a-header">{esc(a['name'])} z</th>
+<th scope="col" class="num" id="h2h-b-header">{esc(b['name'])} z</th><th scope="col" class="num">Δz (A − B)</th></tr></thead>
+<tbody id="h2h-rows">{''.join(rows)}</tbody></table></div>
+<div class="h2h-wrap" role="region" aria-label="Head-to-head overall summary" tabindex="0">
+<table><caption>Overall comparison</caption><thead><tr><th scope="col">Metric</th>
+<th scope="col" class="num" id="h2h-summary-a">{esc(a['name'])}</th>
+<th scope="col" class="num" id="h2h-summary-b">{esc(b['name'])}</th></tr></thead><tbody>{''.join(summary)}</tbody></table></div>
+<noscript><p class="note">Interactive model selection requires JavaScript. The default comparison above remains readable without it; the ranking controls still work.</p></noscript>
+<script type="application/json" id="h2h-data">{payload}</script>
+<script>{script}</script>
+</section>'''
+
+
 def build_html(ranked, front, zstats, report, models, img_b64, ii_weights, ii_source):
     frontier_slugs = {r['slug'] for r in front}
     n_scored = len(ranked)
@@ -851,6 +955,8 @@ published cost data sort last.</p>
 </table>
 </div>
 </div>
+
+{render_head_to_head(ranked)}
 
 <h2>What SoftMinZ measures</h2>
 <p>SoftMinZ uses seven separately standardized components from six benchmarks in the

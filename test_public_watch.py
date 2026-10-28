@@ -312,6 +312,64 @@ class CohortTests(unittest.TestCase):
             self.assertTrue(all(r['softminz'] is None for r in rows))
 
 
+class HeadToHeadTests(unittest.TestCase):
+    def rows(self):
+        return w.zscore_battery(complete_models())[0]
+
+    def test_exports_every_scored_model_and_full_precision_z(self):
+        ranked=self.rows(); data=w.comparison_data(ranked)
+        self.assertEqual(data['cohort_size'],len(ranked))
+        self.assertEqual([c['key'] for c in data['components']],w.BATTERY)
+        self.assertEqual({m['slug'] for m in data['models']},{r['slug'] for r in ranked})
+        for model,row in zip(data['models'],ranked):
+            self.assertEqual(model['z'],[row['zscores'][b] for b in w.BATTERY])
+        self.assertNotEqual(data['default_a'],data['default_b'])
+
+    def test_default_recent_pair_when_present(self):
+        ranked=self.rows()
+        ranked[0]['slug']='gpt-6-astra-high'; ranked[1]['slug']='claude-opus-5-5'
+        data=w.comparison_data(ranked)
+        self.assertEqual(data['default_a'],'gpt-6-astra-high')
+        self.assertEqual(data['default_b'],'claude-opus-5-5')
+
+    def test_missing_preferred_model_falls_back_to_two_distinct_models(self):
+        ranked=self.rows(); ranked[0]['slug']='claude-opus-5-5'
+        data=w.comparison_data(ranked)
+        self.assertNotEqual(data['default_a'],data['default_b'])
+
+    def test_server_rendered_fallback_controls_and_seven_rows(self):
+        page=w.render_head_to_head(self.rows())
+        self.assertIn('id="h2h-controls" disabled',page)
+        self.assertIn('<noscript>',page)
+        self.assertEqual(page.count('<tr data-component='),7)
+        self.assertIn('Δz = Model A − Model B',page)
+        self.assertIn('does not recalculate the normalization',page)
+        self.assertIn('aria-live="polite"',page)
+
+    def test_safe_json_round_trip_and_html_escaping(self):
+        import re
+        ranked=self.rows(); hostile='</script><img src=x onerror=alert(1)>&"'
+        ranked[0]['name']=hostile
+        page=w.render_head_to_head(ranked)
+        payload=re.search(r'<script type="application/json" id="h2h-data">(.*?)</script>',page,re.S).group(1)
+        self.assertNotIn('<',payload)
+        self.assertEqual(json.loads(payload)['models'][0]['name'],hostile)
+        self.assertNotIn('<img src=x onerror=',page)
+        self.assertIn('&lt;/script&gt;',page)
+
+    def test_unpriced_scored_models_are_not_filtered_out(self):
+        ranked=self.rows(); ranked[0]['cost_task']=None
+        data=w.comparison_data(ranked)
+        self.assertEqual(len(data['models']),len(ranked))
+        self.assertIsNone(data['models'][0]['cost_task'])
+
+    def test_panel_is_between_rankings_and_methodology(self):
+        models=complete_models(); ranked,rows,stats=w.zscore_battery(models)
+        page=w.build_html(ranked,[],stats,{},models,'dGVzdA==',WEIGHTS,'test')
+        self.assertLess(page.index('id="rank-cost-table"'),page.index('id="head-to-head"'))
+        self.assertLess(page.index('id="head-to-head"'),page.index('<h2>What SoftMinZ measures'))
+
+
 class PublicationGateTests(unittest.TestCase):
     def check_aborts_before_artifacts(self, report, models):
         with tempfile.TemporaryDirectory() as tmp:
