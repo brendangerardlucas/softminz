@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 """SoftMinZ public model-value watch — one script, one webpage.
 
-Scrapes Artificial Analysis (free, no key), z-scores a fixed 7-benchmark
+Scrapes Artificial Analysis (free, no key), z-scores a fixed 6-benchmark
 battery chosen for scientific-computing relevance, computes the SoftMinZ
 index (a soft-minimum of the z-scores over the fully-benched cohort),
 prices each model with an agentic-workload cost per task derived from raw
 AA cost data, draws the SoftMinZ-vs-cost Pareto frontier, and emits a
 single self-contained docs/index.html for GitHub Pages.
 
-No vendor discounts, no portal pricing, no free tiers: raw cost data only.
+Published AA costs and its cache/pricing assumptions only; no added discounts or free-tier substitutions.
 
 SOFTMINZ
 --------
-Every battery benchmark is z-scored across all models measured on it.
+Every battery benchmark is z-scored across the same strictly complete cohort.
 SoftMinZ is the negative natural log of the mean of e^{-z}:
 
     SoftMinZ = -ln[ (1/n) * sum_b exp(-z_b) ]
@@ -26,15 +26,16 @@ COST PER TASK
 -------------
 Artificial Analysis publishes a per-benchmark "weighted cost per task"
 for the benchmarks in its Intelligence Index (per-model split embedded
-in the global table on every /models/<slug> page; the leaderboard payload
+in public model-page payloads; the leaderboard payload
 carries only the aggregate total, used here as a cross-check). We divide
 each weighted cost by the benchmark's Intelligence Index weight to recover
-the unweighted cost, then average over the five benchmarks that represent
-real agentic workflow spend (GDPval-AA v2.1, AutomationBench-AA,
-Terminal-Bench v4.0, AA-LCR v1.1, AA-Briefcase v1.1), weighted by task count:
+the unweighted cost, then average over four expensive agentic workloads
+(AA-Briefcase v1.1, Terminal-Bench 4.0, FrontierCode 2.0, and
+Terminal-Bench-Science 0.1), weighted by task count:
 
     C_task = sum_b C_b * T_b / sum_b T_b
 """
+import argparse
 import base64
 import collections
 import datetime
@@ -62,46 +63,39 @@ BASE = 'https://artificialanalysis.ai/evaluations/'
 II_METHOD_URL = 'https://artificialanalysis.ai/methodology/intelligence-benchmarking'
 REPO_URL = 'https://github.com/brendangerardlucas/softminz'
 
-# ---------------------------------------------------------------------------
-# The scoring battery: seven benchmarks, chosen for relevance to scientific
-# computing. (LiveCodeBench was in the battery until 2026-08-18, when
-# Artificial Analysis dropped it. Terminal-Bench Hard -> v2.1 on 2026-09-05;
-# v2.1 -> v4.0 on 2026-09-07 when AA's Intelligence Index v4.3 adopted it.
-# GPQA Diamond was dropped 2026-09-07 (user directive: nothing the II has
-# dropped stays in softminz, scored or on the cost axis — GPQA left the II
-# in AA's v4.2 revision). tau3-banking left the II in v4.3 and is likewise
-# gone from both the battery and the cost axis.)
-# ---------------------------------------------------------------------------
-MATHSCI = ['critpt', 'hle', 'omniscience']                    # science & knowledge
-CODESCI = ['scicode', 'terminalbench_v40']                    # code & agents
-TRUST = 'non_hallucination_rate'
-LONGCTX = 'lcr'
-BATTERY = MATHSCI + CODESCI + [TRUST, LONGCTX]
-# STRICT COMPLETENESS (user directive 2026-09-05): a model is a data point
-# only if AA has evaluated it on EVERY battery benchmark — no partial
-# profiles in the z-pools and no partial scores. The scored cohort shrinks
-# to the models AA fully benched; that is the price of representativeness.
-# (Supersedes the old COVERAGE_FLOOR=6 + MANDATORY partial rules.)
-
+# AA Intelligence Index v5.0 scientific-computing subset (2026-10-28).
+# Never backfill a versioned benchmark with an older evaluation.
+BATTERY = ['terminalbench_v40', 'frontiercode_v20', 'omniscience_v11',
+           'hle_diamond', 'critpt_v2_hard', 'terminalbench_science']
+# STRICT COMPLETENESS: partial profiles neither score nor enter any z-pool.
 BENCH_LABEL = {
-    'hle': "Humanity's Last Exam",
-    'critpt': 'CritPt', 'omniscience': 'AA-Omniscience',
-    'scicode': 'SciCode',
-    'terminalbench_v40': 'Terminal-Bench v4.0',
-    'lcr': 'AA-LCR (long-context reasoning)',
-    'non_hallucination_rate': 'Non-hallucination rate',
+    'terminalbench_v40': 'Terminal-Bench 4.0',
+    'frontiercode_v20': 'FrontierCode 2.0',
+    'omniscience_v11': 'AA-Omniscience v1.1',
+    'hle_diamond': 'HLE-Diamond',
+    'critpt_v2_hard': 'CritPt v2 (Hard Subset)',
+    'terminalbench_science': 'Terminal-Bench-Science 0.1',
 }
-# Evaluation-page links used for inline citations on the webpage.
 BENCH_URL = {
-    'hle': 'https://artificialanalysis.ai/evaluations/humanitys-last-exam',
-    'critpt': 'https://artificialanalysis.ai/evaluations/critpt',
-    'omniscience': 'https://artificialanalysis.ai/evaluations/omniscience',
-    'scicode': 'https://artificialanalysis.ai/evaluations/scicode',
-    'terminalbench_v40': 'https://artificialanalysis.ai/evaluations/terminalbench-v4-0',
-    'lcr': 'https://artificialanalysis.ai/evaluations/artificial-analysis-long-context-reasoning',
+    'terminalbench_v40': BASE + 'terminalbench-v4-0',
+    'frontiercode_v20': BASE + 'frontiercode-2-0',
+    'omniscience_v11': BASE + 'omniscience',
+    'hle_diamond': BASE + 'hle-diamond',
+    'critpt_v2_hard': BASE + 'critpt',
+    'terminalbench_science': BASE + 'terminal-bench-science',
+}
+FIELD_MAP = {
+    'terminalbench_v40': 'terminalBench40',
+    'frontiercode_v20': 'frontierCode20',
+    'omniscience_v11': 'omniscience',
+    'hle_diamond': 'hleDiamond',
+    'critpt_v2_hard': 'critptAgenticHard',
+    'terminalbench_science': 'terminalBenchScience',
+    'intelligence_index': 'intelligenceIndex',
+    'analystAgent': 'analystAgent',  # watch-only, never a scoring dimension
 }
 # Primary data source: the /leaderboards/models page embeds the COMPLETE
-# per-model dataset (~600+ records, every battery field) server-side in its
+# leaderboard model dataset (every available battery field) in its
 # Next.js flight payload. As of 2026-08-18 the individual /evaluations/*
 # pages only embed the top ~30 records plus name stubs for the rest, so
 # scraping them per-page no longer yields the full field. As of 2026-09-10
@@ -112,113 +106,108 @@ MODELS_PAGE = 'https://artificialanalysis.ai/leaderboards/models'
 MODELS_DIR = 'https://artificialanalysis.ai/models/'
 
 
-def _fetch_cost_breakdown(records, max_age_h=12):
-    """{model_slug: {eval_slug: weightedCostPerTask}} + carrier slug.
+def aggregate_cost(record):
+    value = record.get('intelligenceIndexCostPerTask')
+    if is_number(value):
+        return value
+    if isinstance(value, dict) and isinstance(value.get('cost'), dict):
+        value = value['cost'].get('total')
+        return value if is_number(value) else None
+    return None
 
-    Tries the first few leaderboard slugs alphabetically and keeps the
-    richest complete split (best-of-5). A carrier cached before new models
-    landed parses fine but silently drops them, so any carrier whose
-    record count trails the leaderboard is force-refetched once. Dies on
-    total failure (fail-closed: no live split, no publish)."""
-    errs = []
-    best, best_cand = None, None
-    for cand in sorted(records)[:5]:
-        try:
-            raw = fetch(MODELS_DIR + cand, DATA / f'model-cost-{cand}.html', max_age_h)
+
+def _fetch_cost_breakdown(records, max_age_h=12):
+    """Merge exact-slug v5 splits and require coverage of all published totals.
+
+    Some public model pages embed the full dataset; others only initial selected
+    models. Try several carriers, then genuine self-pages for any remaining
+    aggregate-bearing model. Never copy a split to a sibling effort variant.
+    """
+    wanted = {s for s, r in records.items() if aggregate_cost(r) is not None}
+    merged, carriers, errors = {}, [], []
+
+    def read_carrier(cand):
+        path = DATA / f'model-cost-{cand}.html'
+        raw = fetch(MODELS_DIR + cand, path, max_age_h)
+        recs = extract_records(flight(raw))
+        splits = {slug: split for slug, rec in recs.items()
+                  if (split := extract_cost_split(rec)) is not None}
+        # A cached initial-selection page can miss variants/new v5 components.
+        if max_age_h > 0 and not (wanted - set(merged)) <= set(splits):
+            raw = fetch(MODELS_DIR + cand, path, 0)
             recs = extract_records(flight(raw))
-            if len(recs) < len(records):
-                try:
-                    raw = fetch(MODELS_DIR + cand, DATA / f'model-cost-{cand}.html', 0)
-                    recs = extract_records(flight(raw))
-                except Exception as e:
-                    errs.append(f'{cand}: refresh failed: {e}')
-                    continue
-        except Exception as e:
-            errs.append(f'{cand}: {e}')
-            continue
+            splits = {slug: split for slug, rec in recs.items()
+                      if (split := extract_cost_split(rec)) is not None}
+        for slug, split in splits.items():
+            if slug in merged and any(abs(split[k] - merged[slug][k]) > 1e-6
+                                      for k in II_BENCHMARK_SLUGS):
+                raise ValueError(f'conflicting cost splits for {slug}')
+            expected = aggregate_cost(records.get(slug, {}))
+            if expected is not None and abs(sum(split.values()) - expected) > 1e-6:
+                raise ValueError(f'cost split disagrees with leaderboard total for {slug}')
+            merged[slug] = split
+        if splits:
+            carriers.append(cand)
+
+    candidates = list(dict.fromkeys(sorted(records)[:5]
+                      + (['command-a-plus'] if 'command-a-plus' in records else [])))
+    attempted = set()
+    for cand in candidates:
+        attempted.add(cand)
         try:
-            costmap = {}
-            for s, rec in recs.items():
-                iic = rec.get('intelligenceIndexCostPerTask')
-                ev = iic.get('evaluations') if isinstance(iic, dict) else None
-                if not isinstance(ev, list) or not ev:
-                    continue
-                split = {COST_SLUG_ALIASES.get(e['slug'], e['slug']):
-                         e['weightedCostPerTask'] for e in ev
-                         if isinstance(e, dict) and isinstance(e.get('slug'), str)
-                         and isinstance(e.get('weightedCostPerTask'), (int, float))}
-                if II_COST_SLUGS <= set(split):
-                    costmap[s] = split
-            if costmap and (best is None or len(costmap) > len(best)):
-                best, best_cand = costmap, cand
-            if not costmap:
-                errs.append(f'{cand}: 0 complete splits parsed')
-        except Exception as e:
-            errs.append(f'{cand}: {e}')
-    if best:
-        return best, best_cand
-    print(f'FATAL: no /models carrier page yielded a cost split '
-          f'({"; ".join(errs)}). Refusing to publish costs without live '
-          f'per-benchmark data.', file=sys.stderr)
-    sys.exit(1)
+            read_carrier(cand)
+        except ValueError as exc:
+            raise SystemExit(f'FATAL: invalid v5 cost source: {exc}') from exc
+        except Exception as exc:
+            errors.append(f'{cand}: {exc}')
+        if merged and wanted <= set(merged):
+            break
+    # Recover only published measured costs from the matching model's own page.
+    for cand in sorted(wanted - set(merged) - attempted):
+        try:
+            read_carrier(cand)
+        except ValueError as exc:
+            raise SystemExit(f'FATAL: invalid v5 cost source: {exc}') from exc
+        except Exception as exc:
+            errors.append(f'{cand}: {exc}')
+        time.sleep(0.25)
+    missing = wanted - set(merged)
+    if not merged or missing:
+        detail = f'missing published splits: {", ".join(sorted(missing))}' if missing else 'no complete v5 splits'
+        raise SystemExit(f'FATAL: {detail}; refusing incomplete cost coverage ({"; ".join(errors)}).')
+    return merged, '+'.join(carriers)
 
 # Per-evaluation pages cross-check the leaderboard scrape using JSON-LD
 # score rows or, when absent, their model payloads:
 # page slug -> (payload field, JSON-LD label).
 PAGES = {
-    'humanitys-last-exam': ('hle', "Humanity's Last Exam"),
-    'scicode':        ('scicode', 'SciCode'),
-    'critpt':         ('critpt', 'CritPt'),
-    'terminalbench-v4-0': ('terminalbench_v40', 'Terminal-Bench v4.0'),
-    'omniscience':    ('omniscience', 'Omniscience Index'),
-    'artificial-analysis-long-context-reasoning': ('lcr', 'AA-LCR'),
-    'artificial-analysis-intelligence-index': ('intelligence_index_v4_1', 'Intelligence Index'),
+    'terminalbench-v4-0': ('terminalbench_v40', 'Terminal-Bench 4.0'),
+    'frontiercode-2-0': ('frontiercode_v20', 'FrontierCode 2.0'),
+    'omniscience': ('omniscience_v11', 'AA-Omniscience v1.1 Index'),
+    'hle-diamond': ('hle_diamond', 'HLE-Diamond'),
+    'critpt': ('critpt_v2_hard', 'CritPt v2 (Hard Subset)'),
+    'terminal-bench-science': ('terminalbench_science', 'Terminal-Bench-Science 0.1'),
+    'artificial-analysis-intelligence-index': ('intelligence_index', 'Intelligence Index'),
 }
 
-# Intelligence Index weights and task counts are loaded LIVE from AA's
-# methodology page on EVERY run (load_ii_benchmarks below). There is NO
-# hardcoded fallback: if the page is unreachable or its table cannot be
-# parsed, the run dies rather than publish costs computed from stale weights.
-#
-# Which benchmarks represent agentic workflow cost (II_COST_SLUGS) is an
-# IDENTITY choice, not a weight, so it is pinned here and does not drift
-# when AA revises the methodology.
-# II v4.3 (2026-09-07): the cost axis tracks what the CURRENT II weights —
-# benchmark dropped from the II = dropped from the cost axis too. GPQA
-# (left II in v4.2), tau3-banking and Terminal-Bench v2.1 (both left in
-# v4.3) are gone. AutomationBench-AA and AA-Briefcase feed COST weights
-# only — deliberately never scored (user directive 2026-09-07).
-II_COST_SLUGS = {'gdpval-aa', 'automationbench-aa', 'terminalbench-v4-0',
-                 'artificial-analysis-long-context-reasoning', 'aa-briefcase'}
-
-# Carrier-payload slug aliases (AA renames slugs without notice; the canonical
-# slug is the II_COST_SLUGS member). 2026-09-16: /models carrier payload
-# renamed terminalbench-v4-0 -> terminalbench-4-0.
-COST_SLUG_ALIASES = {'terminalbench-4-0': 'terminalbench-v4-0'}
-
+# Fixed identity of the expensive-workload cost subset, not per-model selection.
+II_COST_SLUGS = {'aa-briefcase', 'terminalbench-4-0', 'frontiercode-2-0',
+                 'terminal-bench-science'}
+# All nine components are required for the aggregate cost cross-check.
 II_TABLE_NAMES = {
-    'GDPval-AA v2': 'gdpval-aa',
-    # AA v4.3.2 (2026-09-22): methodology table bumped to 'GDPval-AA v2.1'
-    # (220 tasks, Elo anchored to DeepSeek V4.1 Flash at 1600, Crowd-BT).
-    'GDPval-AA v2.1': 'gdpval-aa', '𝜏³-Banking': 'tau3-banking',
-    'SciCode': 'scicode',
-    "HLE (Humanity's Last Exam)": 'humanitys-last-exam',
-    'CritPt': 'critpt',
-    'AA-Omniscience': 'omniscience',
-    # AA v4.2 (2026-09-04): LCR display name gained a version suffix.
-    'AA-LCR v1.1': 'artificial-analysis-long-context-reasoning',
-    'AA-LCR': 'artificial-analysis-long-context-reasoning',
-    # AA v4.2 new benchmarks (mapped even though not scored).
-    # AA v4.3.2 (2026-09-22): cost-only Agents eval versioned to v1.1
-    # (91 tasks across 4 scenarios, anchor GPT-5.5 medium at 1000, Crowd-BT).
-    'AA-Briefcase': 'aa-briefcase', 'AA-Briefcase v1.1': 'aa-briefcase',
-    'GDP.pdf': 'gdp-pdf',
-    # AA v4.3 (2026-09-07): new II members (cost weights only, not scored).
+    'AA-Briefcase v1.1': 'aa-briefcase',
     'AutomationBench-AA': 'automationbench-aa',
-    'Terminal-Bench v4.0': 'terminalbench-v4-0',
-    # AA 2026-09-16: methodology table dropped the 'v' ('Terminal-Bench 4.0').
-    'Terminal-Bench 4.0': 'terminalbench-v4-0',
+    'GDP.pdf': 'gdp-pdf',
+    'FrontierCode 2.0': 'frontiercode-2-0',
+    'Terminal-Bench 4.0': 'terminalbench-4-0',
+    'Terminal-Bench-Science 0.1': 'terminal-bench-science',
+    'CritPt v2 (Hard Subset)': 'critpt-v2-hard',
+    'AA-Omniscience v1.1': 'omniscience',
+    'HLE-Diamond': 'hle-diamond',
 }
+II_BENCHMARK_SLUGS = set(II_TABLE_NAMES.values())
+COST_LABEL = {slug: label for label, slug in II_TABLE_NAMES.items()}
+COST_SLUG_ALIASES = {'terminalbench-v4-0': 'terminalbench-4-0'}
 
 
 # ---------------------------------------------------------------------------
@@ -325,23 +314,68 @@ def jsonld_scores(raw, label):
 # AA 2026-10-26: leaderboard benchmark values moved into a slug-keyed
 # scores object; evaluation pages still carry the legacy flat fields.
 SCORE_SLUGS = {
-    'hle': 'humanitys-last-exam',
-    'scicode': 'scicode',
-    'critpt': 'critpt',
     'terminalBench40': 'terminalbench-4-0',
-    'lcr': 'artificial-analysis-long-context-reasoning',
-    'omniscienceNonHallucination': 'omniscience-non-hallucination',
+    'frontierCode20': 'frontiercode-2-0',
+    'hleDiamond': 'hle-diamond',
+    'critptAgenticHard': 'critpt-v2-hard',
+    'terminalBenchScience': 'terminal-bench-science',
     'analystAgent': 'aa-analyst-agent',
 }
 
 
+def is_number(value):
+    return type(value) in (int, float) and math.isfinite(value)
+
+
 def _score_value(record, key):
-    """Read a benchmark from either AA payload shape without inventing data."""
+    """Read the exact named evaluation; reject booleans/non-finite values."""
     value = record.get(key)
-    if not isinstance(value, (int, float)):
+    if not is_number(value):
         scores = record.get('scores')
         value = scores.get(SCORE_SLUGS.get(key, key)) if isinstance(scores, dict) else None
-    return value if isinstance(value, (int, float)) else None
+    return value if is_number(value) else None
+
+
+def extract_cost_split(record):
+    """Return an exact v5 split; missing data is unavailable, contradictions fatal."""
+    cost = record.get('intelligenceIndexCostPerTask')
+    if not isinstance(cost, dict) or not isinstance(cost.get('evaluations'), list):
+        return None
+    split = {}
+    for item in cost['evaluations']:
+        if not isinstance(item, dict) or not isinstance(item.get('slug'), str):
+            return None
+        slug = COST_SLUG_ALIASES.get(item['slug'], item['slug'])
+        value = item.get('weightedCostPerTask')
+        if slug in split:
+            raise ValueError(f'duplicate cost component: {slug}')
+        if not is_number(value) or value < 0:
+            return None
+        split[slug] = value
+    if set(split) != II_BENCHMARK_SLUGS:
+        return None
+    aggregate = cost.get('cost')
+    total = aggregate.get('total') if isinstance(aggregate, dict) else None
+    if not is_number(total) or total < 0:
+        return None
+    if not math.isclose(sum(split.values()), total, rel_tol=0., abs_tol=1e-6):
+        raise ValueError('v5 cost split disagrees with its carrier aggregate')
+    return split
+
+
+def cost_per_task(weighted, ii_weights):
+    """Deweight and task-count-average the same four workloads for every model."""
+    total, tasks = 0.0, 0
+    for slug in sorted(II_COST_SLUGS):
+        cost = weighted.get(slug)
+        info = ii_weights.get(slug, {})
+        weight, count = info.get('weight'), info.get('tasks')
+        if (not is_number(cost) or cost < 0 or not is_number(weight) or weight <= 0
+                or type(count) is not int or count <= 0):
+            return None
+        total += (cost / weight) * count
+        tasks += count
+    return total / tasks if tasks and total > 0 else None
 
 
 def scrape(max_age_h=12, ii_weights=None):
@@ -349,8 +383,6 @@ def scrape(max_age_h=12, ii_weights=None):
     report = {}
     if not ii_weights:
         raise ValueError('ii_weights is required — call load_ii_benchmarks() first')
-    cost_benchmarks = {k: v for k, v in ii_weights.items() if k in II_COST_SLUGS}
-    cost_total_tasks = sum(b['tasks'] for b in cost_benchmarks.values())
 
     # --- primary scrape: the complete model dataset from /leaderboards/models
     try:
@@ -363,17 +395,6 @@ def scrape(max_age_h=12, ii_weights=None):
         report['leaderboards/models'] = 'FAILED: 0 records extracted'
         return dict(models), report
 
-    # field map: our battery field -> AA's camelCase payload key
-    FIELD_MAP = {
-        'hle': 'hle', 'scicode': 'scicode', 'critpt': 'critpt',
-        'omniscience': 'omniscience', 'lcr': 'lcr',
-        # AA 2026-09-16: leaderboard payload renamed terminalbenchV40 ->
-        # terminalBench40 (verified live: 162 numeric under the new key, 0
-        # under the old).
-        'terminalbench_v40': 'terminalBench40',
-        'intelligence_index_v4_1': 'intelligenceIndex',
-        'analystAgent': 'analystAgent',  # watch-only (not scored; see _watch_analyst_agent)
-    }
     counts = collections.Counter()
     for s, rec in records.items():
         nm = rec.get('name') or rec.get('shortName') or s
@@ -383,50 +404,23 @@ def scrape(max_age_h=12, ii_weights=None):
             if isinstance(v, (int, float)):
                 models[s][f] = float(v)
                 counts[f] += 1
-        # non-hallucination rate (battery TRUST field): flat payload key
-        # primary; derived fallback 1 - breakdown.total.hallucinationRate
-        # (AA v4.3+ shells sometimes drop the flat key).
-        nhr = _score_value(rec, 'omniscienceNonHallucination')
-        if not isinstance(nhr, (int, float)):
-            ob = rec.get('omniscienceBreakdown')
-            if isinstance(ob, dict):
-                tot = ob.get('total')
-                if isinstance(tot, dict):
-                    hr = tot.get('hallucinationRate')
-                    if isinstance(hr, (int, float)):
-                        nhr = 1.0 - float(hr)
-        if isinstance(nhr, (int, float)):
-            models[s]['non_hallucination_rate'] = float(nhr)
-            counts['non_hallucination_rate'] += 1
         # leaderboard cost is an II-weighted aggregate, not the
         # per-benchmark split: keep it only as a cross-check of the split
         # fetched below (sum of split must equal the published total).
-        iic = rec.get('intelligenceIndexCostPerTask')
-        if isinstance(iic, (int, float)):
-            # AA now emits the total directly as a numeric field.
-            models[s]['_ii_cost_total'] = float(iic)
-        elif isinstance(iic, dict) and isinstance(iic.get('cost'), dict):
-            tot = iic['cost'].get('total')
-            if isinstance(tot, (int, float)):
-                models[s]['_ii_cost_total'] = float(tot)
-    # --- agentic cost per task: AA moved the per-benchmark cost split off
-    # the leaderboard payload (2026-09-10: intelligenceIndexCostPerTask is
-    # now an aggregate {cost:{total}} or "$undefined"). Every /models/<slug>
-    # page embeds the GLOBAL priced-model x benchmark table, so one carrier
-    # fetch recovers the full split. Still AA-only, still live, still
-    # fail-closed: no carrier with a complete split -> the run DIES.
+        total = aggregate_cost(rec)
+        if total is not None:
+            models[s]['_ii_cost_total'] = total
+    # AA public model-page payloads carry per-benchmark splits. Some pages
+    # contain full data, some selected models: require every leaderboard
+    # aggregate-bearing model to have its own exact validated v5 split.
     costmap, carrier = _fetch_cost_breakdown(records, max_age_h)
     n_checked = n_bad = 0
     for s, weighted in costmap.items():
         if s not in models:
             continue
-        total = 0.0
-        for bslug, wc in weighted.items():
-            info = cost_benchmarks.get(bslug)
-            if info:
-                total += (wc / info['weight']) * info['tasks']
-        if total > 0:
-            models[s]['cost_task'] = total / cost_total_tasks
+        cost = cost_per_task(weighted, ii_weights)
+        if cost is not None:
+            models[s]['cost_task'] = cost
             counts['cost_task'] += 1
         exp = models[s].pop('_ii_cost_total', None)
         if exp is not None:
@@ -438,8 +432,11 @@ def scrape(max_age_h=12, ii_weights=None):
               f'({n_bad}/{n_checked}). Cost semantics drifted — refusing to publish.',
               file=sys.stderr)
         sys.exit(1)
-    report[f'models/{carrier}'] = (f'cost split ({len(costmap)} priced, '
-                                   f'{n_checked} totals cross-checked)')
+    source_zeros = sum(1 for s, split in costmap.items() if s in models and sum(split.values()) == 0)
+    report[f'models/{carrier}'] = (f'v5 cost split ({len(costmap)} complete source splits, '
+                                   f'{n_checked} leaderboard totals cross-checked, '
+                                   f'{counts["cost_task"]} positive leaderboard prices, '
+                                   f'{source_zeros} source-zero prices excluded)')
     report['leaderboards/models'] = (
         f'{len(records)} records — '
         + ', '.join(f'{f}:{counts[f]}' for f in FIELD_MAP if counts[f]))
@@ -511,7 +508,7 @@ def parse_ii_methodology_weights(raw):
         weight_cell = next((t for t in texts if t.endswith('%')), None)
         if weight_cell is None:
             continue
-        m = re.search(r'^(\d{1,3}(?:,\d{3})*|\d+)', texts[eval_idx + 1])
+        m = re.search(r'^(\d[\d,]*)', texts[eval_idx + 1])
         if not m:
             continue
         weights[slug] = {'weight': float(weight_cell.rstrip('%')) / 100.0,
@@ -532,13 +529,17 @@ def load_ii_benchmarks(cache_dir, max_age_h=12):
         print(f'FATAL: could not fetch AA methodology page: {e}', file=sys.stderr)
         sys.exit(1)
     parsed = parse_ii_methodology_weights(raw)
-    missing = set(II_COST_SLUGS) - set(parsed)
-    if missing or not parsed or any(v['weight'] <= 0 for v in parsed.values()):
+    missing = II_BENCHMARK_SLUGS - set(parsed)
+    valid_version = bool(re.search(r'Intelligence Index v5\.0', _td_text(raw)))
+    if (not valid_version or missing or set(parsed) != II_BENCHMARK_SLUGS
+            or any(not is_number(v['weight']) or v['weight'] <= 0
+                   or type(v['tasks']) is not int or v['tasks'] <= 0 for v in parsed.values())
+            or not math.isclose(sum(v['weight'] for v in parsed.values()), 1., abs_tol=1e-6)):
         print(f'FATAL: AA methodology table unparseable or incomplete '
               f'(missing: {sorted(missing) or "none"}; parsed {len(parsed)} rows). '
               f'Refusing to publish costs from stale weights.', file=sys.stderr)
         sys.exit(1)
-    return parsed, 'live (AA methodology page, parsed this run)'
+    return parsed, 'live (AA v5.0 methodology page, parsed this run)'
 
 
 # ---------------------------------------------------------------------------
@@ -565,21 +566,20 @@ def _watch_analyst_agent(models):
 
 
 def zscore_battery(models):
-    """z-score every battery benchmark across all models measured on it,
-    apply the coverage/mandatory gates, compute SoftMinZ. Returns rows."""
+    """Normalize every dimension over the same complete cohort; score all six or none."""
     rows = []
     for slug, d in models.items():
         r = {'slug': slug, 'name': d.get('name', slug)}
         for f in BATTERY:
             r[f] = d.get(f)
         r['cost_task'] = d.get('cost_task')
-        r['ii'] = d.get('intelligence_index_v4_1')
+        r['ii'] = d.get('intelligence_index')
         rows.append(r)
 
     # z-pools: STRICT — only models with the complete battery contribute
     # to the mean/SD (partial profiles neither receive a score nor move
     # the statistics).
-    complete = [r for r in rows if all(r.get(f) is not None for f in BATTERY)]
+    complete = [r for r in rows if all(is_number(r.get(f)) for f in BATTERY)]
     zstats = {}
     for f in BATTERY:
         vals = [r[f] for r in complete]
@@ -596,16 +596,16 @@ def zscore_battery(models):
     for r in rows:
         r['zscores'] = {}
         for f in BATTERY:
-            if r.get(f) is not None and f in zstats:
+            if is_number(r.get(f)) and f in zstats:
                 r['zscores'][f] = (r[f] - zstats[f][0]) / zstats[f][1]
-        r['battery_ok'] = all(r.get(f) is not None for f in BATTERY)
-        if r['battery_ok']:
+        r['battery_ok'] = all(is_number(r.get(f)) for f in BATTERY)
+        if r['battery_ok'] and set(zstats) == set(BATTERY):
             zs = list(r['zscores'].values())
             r['softminz'] = round(-math.log(sum(math.exp(-z) for z in zs) / len(zs)), 2)
         else:
             r['softminz'] = None
 
-    ranked = sorted([r for r in rows if r['battery_ok']],
+    ranked = sorted([r for r in rows if r['softminz'] is not None],
                     key=lambda r: (-r['softminz'], r['slug']))
     for i, r in enumerate(ranked, 1):
         r['rank'] = i
@@ -729,36 +729,18 @@ def build_html(ranked, front, zstats, report, models, img_b64, ii_weights, ii_so
     n_measured = len(models)
     n_cost = sum(1 for r in ranked if r.get('cost_task') is not None)
 
-    # Dynamic GPT-5.6 hallucination paragraph, from this run's numbers.
-    nhr_all = [v['non_hallucination_rate'] for v in models.values()
-               if isinstance(v.get('non_hallucination_rate'), (int, float))]
-    mu = statistics.mean(nhr_all)
-    sd = statistics.pstdev(nhr_all)
-    gpt = [r for r in ranked if 'gpt-5-6' in r['slug']]
-    gpt_nhr = [r['non_hallucination_rate'] for r in gpt]
-    gpt_best = max(gpt, key=lambda r: r['softminz']) if gpt else None
-    gpt_nhr_med = statistics.median(gpt_nhr) if gpt_nhr else None
-    gpt_z = (gpt_nhr_med - mu) / sd if gpt_nhr_med is not None else None
-    best_rank = gpt_best['rank'] if gpt_best else None
-    # Top-of-table NHR range, computed fresh each run. Ranked models are all
-    # mandated to carry a non-hallucination measurement, so the top 5 always
-    # have one.
-    top5_nhr = [r['non_hallucination_rate'] * 100 for r in ranked[:5]]
-    top_lo, top_hi = round(min(top5_nhr)), round(max(top5_nhr))
-    gpt_par = (
-        f'Across the {len(gpt)} GPT-5.6 variants scored today, the median non-hallucination '
-        f'rate is {(gpt_nhr_med * 100):.1f}% against a field mean of {(mu * 100):.1f}% '
-        f'(population σ = {(sd * 100):.1f} points) — a z-score of roughly {gpt_z:.2f} on the '
-        f'trust benchmark alone. Top-ranked models sit far higher: the five best in the '
-        f'table carry non-hallucination rates of {top_lo}–{top_hi}%. Because SoftMinZ is a '
-        f'soft-<em>minimum</em>, that weak trust score drags every GPT-5.6 variant down even '
-        f'where CritPt, HLE and SciCode are strong — the best-placed variant ranks #{best_rank} of '
-        f'{n_scored}.'
-    ) if gpt_best else ''
-    gpt_section = (
-        f'<h3>Why the GPT-5.6 lineup scores below its reputation</h3>\n<p>{gpt_par}</p>'
-        if gpt_par else ''
-    )
+    battery_items = ''.join(
+        f'<li><a href="{BENCH_URL[b]}">{esc(BENCH_LABEL[b])}</a></li>' for b in BATTERY)
+    cost_rows = ''.join(
+        f'<tr><td>{esc(COST_LABEL[b])}</td><td class="num">{ii_weights[b]["weight"]:.0%}</td>'
+        f'<td class="num">{ii_weights[b]["tasks"]:,}</td></tr>' for b in sorted(II_COST_SLUGS))
+    all_weight_rows = ''.join(
+        f'<tr><td>{esc(COST_LABEL[b])}</td><td class="num">{info["weight"]:.0%}</td>'
+        f'<td class="num">{info["tasks"]:,}</td></tr>' for b, info in ii_weights.items())
+    cost_total_tasks = sum(ii_weights[b]['tasks'] for b in II_COST_SLUGS)
+    stats_rows = ''.join(
+        f'<tr><td>{esc(BENCH_LABEL[b])}</td><td class="num">{zstats[b][0]:.6f}</td>'
+        f'<td class="num">{zstats[b][1]:.6f}</td></tr>' for b in BATTERY)
 
     rows_smz = sorted(ranked, key=lambda r: (-r['softminz'], r['slug']))
     rows_cost = sorted(ranked, key=lambda r: (r.get('cost_task') is None,
@@ -784,7 +766,7 @@ def build_html(ranked, front, zstats, report, models, img_b64, ii_weights, ii_so
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>LLM Index for Scientific Computing</title>
-<meta name="description" content="SoftMinZ — a soft-minimum index over a seven-benchmark battery chosen for scientific-computing relevance, ranked against raw cost per agentic task. Only models evaluated on every battery benchmark are scored. Updated daily from Artificial Analysis data.">
+<meta name="description" content="SoftMinZ — a soft-minimum index over a six-benchmark AA v5 battery chosen for scientific-computing relevance, ranked against raw cost per agentic task. Only models evaluated on every battery benchmark are scored. Updated daily from Artificial Analysis data.">
 <meta property="og:title" content="LLM Index for Scientific Computing (SoftMinZ)">
 <meta property="og:description" content="Frontier LLMs ranked by a soft-minimum performance index for scientific computing vs raw cost per agentic task. Updated daily.">
 <meta property="og:type" content="website">
@@ -839,129 +821,96 @@ published cost data sort last.</p>
 </div>
 
 <h2>What SoftMinZ measures</h2>
-<p>Seven public benchmarks are scored per model. Each benchmark score is first converted to a
-z-score across the scored cohort, so all benchmarks
-contribute in comparable units regardless of their raw scale:</p>
-<div class="math">z<sub>b</sub> = (x<sub>b</sub> − μ<sub>b</sub>) / σ<sub>b</sub>
-&nbsp;&nbsp;(μ<sub>b</sub>, σ<sub>b</sub> are the mean and sample standard deviation
-across the fully-benched cohort — models evaluated on the entire battery)</div>
-<p>The index is then the negative natural logarithm of the mean of e<sup>−z</sup> over the
-model's benchmarks:</p>
-<div class="math">SoftMinZ = −ln [ (1/n) · Σ<sub>b</sub> exp(−z<sub>b</sub>) ]</div>
-<p>This is a smooth <strong>soft-minimum</strong> of the z-scores: it always sits between
-the model's worst z-score and its mean z-score, and it slides toward the worst end as
-the profile becomes more uneven. The practical consequences:</p>
-<ul>
-<li><strong>A weak benchmark cannot be averaged away.</strong> The exponential weights
-e<sup>−z</sup> concentrate on the model's <em>worst</em> results. The discount is not
-cosmetic: a model with six benchmarks at z&nbsp;=&nbsp;+1.5 and one at z&nbsp;=&nbsp;−0.8
-scores 0.67 — below a model that is merely even at z&nbsp;=&nbsp;+1.0 everywhere, despite
-the first model's higher mean (1.17 vs 1.0), because the soft-minimum punishes the
-imbalance by more than the mean gap.</li>
-<li><strong>Balanced excellence is rewarded; lopsided excellence is discounted.</strong></li>
-<li><strong>Every score covers the same ground.</strong> Because only fully-benched models
-are scored, n is the same battery size for every model — no model's index can look better
-simply by having been measured on fewer (or easier-to-average) benchmarks.</li>
-</ul>
-<p>A model is scored only if it has been evaluated on <strong>every benchmark in the
-battery</strong> — no partial profiles. A model missing even one measurement receives no
-index (rather than a gamed low one) and, just as important, contributes to no benchmark's
-z-statistics: the mean and spread of each benchmark are computed over fully-benched models
-only. The scored cohort is therefore exactly the set of models Artificial Analysis has
-completely evaluated — smaller, but representative.</p>
+<p>SoftMinZ uses exactly six benchmarks from the
+<a href="{II_METHOD_URL}">Artificial Analysis Intelligence Index v5.0</a>,
+selected for scientific computing:</p>
+<ul>{battery_items}</ul>
+<p>Terminal-Bench 4.0 measures general terminal execution; FrontierCode 2.0 tests
+changes to real software repositories; Terminal-Bench-Science 0.1 covers scientific
+terminal workflows. CritPt v2's hard subset and HLE-Diamond test difficult scientific
+reasoning and knowledge. AA-Omniscience v1.1 measures factual reliability, rewarding
+correct answers, penalizing incorrect answers and leaving abstentions neutral.</p>
+<p><strong>AA-Omniscience v1.1 is one scoring dimension: its published Omniscience
+Index.</strong> Accuracy and non-hallucination are not added as separate dimensions.
+The former SciCode, AA-LCR, original HLE and original CritPt measurements are not used.
+FrontierCode 1.x, full CritPt v2 and AA-Omniscience v1 cannot substitute for the named
+versions or hard subset. Versions are not treated as interchangeable.</p>
 
-<h3>Why these seven benchmarks</h3>
-<p>The performance battery is chosen for <strong>relevance to scientific computing</strong>:
-science-adjacent reasoning and knowledge (<a href="{BENCH_URL['critpt']}">CritPt</a>,
-<a href="{BENCH_URL['hle']}">Humanity's Last Exam</a>,
-<a href="{BENCH_URL['omniscience']}">AA-Omniscience</a>), the code-execution skills real
-computational work depends on (<a href="{BENCH_URL['scicode']}">SciCode</a>,
-<a href="{BENCH_URL['terminalbench_v40']}">Terminal-Bench v4.0</a>), and the trust
-dimensions that decide whether a model's output can be believed without full
-re-verification (non-hallucination rate,
-<a href="{BENCH_URL['lcr']}">AA-LCR</a> long-context reasoning).</p>
-<p><strong>GPQA Diamond was removed from the battery on 2026-09-07:</strong> Artificial
-Analysis dropped it from their Intelligence Index in the v4.2 revision, and a benchmark the
-index has abandoned no longer earns a place here.
-<strong><a href="https://artificialanalysis.ai/evaluations/tau3-banking">τ³-Banking</a>
-is excluded from the performance calculation</strong> because it
-simulates fintech customer support — a domain-specific agent task whose skill profile says
-nothing about scientific capability; it too left the Intelligence Index in AA's v4.3 revision
-and is now excluded everywhere on this page.
-<strong><a href="https://artificialanalysis.ai/evaluations/gdpval-aa">GDPval-AA v2.1</a>,
-<a href="https://artificialanalysis.ai/evaluations/automationbench-aa">AutomationBench-AA</a>
-and AA-Briefcase v1.1 are likewise excluded from scoring:</strong> they measure professional
-deliverables and workflow automation, not scientific computing — though they remain in the
-cost model below as agentic workload.</p>
+<h3>Complete cohort, sample z-scores</h3>
+<p>A model must have a finite score on <strong>all six benchmarks</strong> to receive
+SoftMinZ or contribute to any benchmark's normalization. Partial profiles are excluded
+from both the ranking and all z-score pools. Every benchmark uses the same complete
+cohort of {n_scored} models, with its mean and sample standard deviation:</p>
+<div class="math">z<sub>b</sub> = (x<sub>b</sub> − μ<sub>b</sub>) / s<sub>b</sub>
+&nbsp; ; &nbsp; s<sub>b</sub> uses the n − 1 denominator</div>
+<div class="math">SoftMinZ = −ln [ (1/6) · Σ<sub>b=1…6</sub> exp(−z<sub>b</sub>) ]</div>
+<p>Each benchmark has equal standing after normalization; AA's Intelligence Index
+weights do <strong>not</strong> weight the performance score. The soft-minimum lies
+between a model's worst and mean z-score. Weak dimensions receive more influence:
+balanced excellence is rewarded, while strength on one benchmark cannot linearly
+cancel weakness on another.</p>
+<p class="note">The battery, evaluation versions and cohort changed with AA v5.0.
+These values and rankings are not directly comparable with the previous seven-benchmark
+SoftMinZ series. Missing data is never filled with older benchmark versions.</p>
+<table><thead><tr><th>Benchmark</th><th class="num">Cohort mean</th>
+<th class="num">Sample SD</th></tr></thead><tbody>{stats_rows}</tbody></table>
+<p class="note">Raw score units are those published by AA: the Omniscience Index is
+in index points; the other five inputs are fractions. Z-scores remove this scale difference.
+If the cohort is too small or any required spread is zero, generation aborts rather than
+computing a partial-dimension index.</p>
 
-<h2>How the cost is computed</h2>
-<p>The cost benchmarks are chosen for <strong>relevance to agentic workflow costs</strong>.
-Artificial Analysis publishes, for each benchmark in its
-Intelligence Index, a <em>weighted</em> cost per task; the per-benchmark split
-comes from the priced-models table embedded in AA's model pages (the leaderboard
-payload carries only the aggregate total, which we use as a cross-check: the split
-must sum to the published total or the run fails). Dividing that by the benchmark's
-Intelligence Index weight recovers the unweighted per-benchmark cost C<sub>b</sub>; the five
-benchmarks that represent agentic workload — GDPval-AA v2.1, AutomationBench-AA,
-Terminal-Bench v4.0, AA-LCR v1.1 and AA-Briefcase v1.1 — are then averaged weighted by task
-count:</p>
-<div class="math">C<sub>task</sub> = Σ<sub>b</sub> C<sub>b</sub> T<sub>b</sub> / Σ<sub>b</sub> T<sub>b</sub></div>
-<p>This is the total cost of running these 5 benchmarks divided by the number of tasks
-across all 5 benchmarks.</p>
-<p>Cheap high-volume knowledge benchmarks (AA-Omniscience, HLE, CritPt,
-SciCode) are excluded from the cost average because they would otherwise dominate the task
-count while representing almost no real agentic spend. The result is a raw USD figure per
-agentic task — list prices only, no discounts. Cost data exists only where Artificial
-Analysis publishes it: {n_cost} of the {n_scored} scored models carry a price today. The rest
-(mostly models AA does not track pricing for) show — in the table and are excluded from the
-cost axis and the Pareto frontier; that is a data-availability gap, not a zero price.</p>
+<h2>Cost per expensive agentic task</h2>
+<p>The cost axis is a <strong>separate workload selection</strong> from the science
+performance battery. We retain the original technique: read AA's published weighted
+per-benchmark cost per task, divide by that benchmark's current Intelligence Index
+weight, and average the unweighted costs using task counts.</p>
+<p>The four selected workloads are AA-Briefcase v1.1, Terminal-Bench 4.0,
+FrontierCode 2.0 and Terminal-Bench-Science 0.1. They are the clear high-cost,
+long-running agentic-workload group in the v5 published data. This is a fixed set for
+every model, not a model-specific choice of whichever measurements look favorable.</p>
+<table><thead><tr><th>Cost workload</th><th class="num">Live II weight</th>
+<th class="num">Task count</th></tr></thead><tbody>{cost_rows}</tbody></table>
+<div class="math">C<sub>b</sub> = weightedCostPerTask<sub>b</sub> / w<sub>b</sub><br>
+C<sub>task</sub> = Σ<sub>b∈cost subset</sub> C<sub>b</sub> T<sub>b</sub>
+/ Σ<sub>b∈cost subset</sub> T<sub>b</sub></div>
+<p>Today's denominator is {cost_total_tasks:,} tasks across those four workloads.
+Task counts and weights are parsed from AA's live methodology table. Repeats are not
+multiplied into the task counts: the input is AA's published per-task cost, not the
+cost of our rerunning its evaluations.</p>
+<p>AA-Omniscience v1.1 and HLE-Diamond have many cheap questions and do not enter the
+cost average. GDP.pdf, AutomationBench-AA and CritPt v2 (Hard Subset) are also excluded
+from this cost subset because their typical published per-task costs are substantially
+lower than the four selected workloads. A benchmark can be included in performance
+without being included in cost, and vice versa. GDPval-AA and AA-LCR are no longer
+members of the v5 Intelligence Index and supply no cost weights here.</p>
+<p>All nine current Intelligence Index cost components, including the excluded cheap
+ones, must be present in a cost split and must sum to AA's published total before the
+four-workload cost is accepted. Costs are never inferred from token prices, a related
+model or another reasoning level. Only {n_cost} of {n_scored} scored models have a
+complete positive published cost today; the remainder show — and are excluded from
+the log-cost chart and Pareto frontier, not treated as free. Source-zero prices are
+also excluded rather than promoted as zero-cost winners. A zero in one published
+component is retained if the complete four-workload average is positive. AA’s reported costs retain
+its published cache-hit and pricing assumptions; they are not cache-free estimates.</p>
 
-<h2>The Artificial Analysis Intelligence Index, and why we don't use it</h2>
-<p>Artificial Analysis' own headline metric, the
-<a href="{II_METHOD_URL}">Intelligence Index</a>, is a plain weighted average of
-normalised benchmark scores:</p>
-<div class="math">II = Σ<sub>b</sub> w<sub>b</sub> · s<sub>b</sub></div>
-<p>with category weights Agents 30%, Coding 20%, Scientific Reasoning 20%, General 30%,
-and per-benchmark weights AA-Briefcase v1.1 15%, GDPval-AA v2.1 10%, AutomationBench-AA 5%,
-Terminal-Bench v4.0 10%, SciCode 10%, HLE 10%, GDP.pdf 10%, CritPt 10%,
-AA-Omniscience 15% (split: 10% accuracy + 5% non-hallucination) and AA-LCR v1.1 5%
-(per the live-parsed
-<a href="{II_METHOD_URL}">AA methodology page</a>, Intelligence Index v4.3.2, September 2026).
-The v4.3 revision <strong>replaced τ³-Banking with AutomationBench-AA</strong> (5%)
-and <strong>upgraded Terminal-Bench v2.1 to v4.0</strong>
-(a table reset in progress — v4.0 scores exist for only a fraction of models so far, which shrinks
-every fully-benched cohort on this page until AA finishes re-running models);
-the v4.3.2 revision <strong>re-anchored the two Elo benchmarks</strong> (GDPval-AA v2.1 to
-DeepSeek V4.1 Flash at 1600, AA-Briefcase v1.1 Crowd-BT fits) and refreshed judge panels;
-the numbers below track the current revision on every run.</p>
-<p>It is a useful headline, but for scientific work it has real flaws:</p>
-<ul>
-<li><strong>A linear average hides weakness.</strong> A model that is excellent on agentic
-benchmarks but hallucinates heavily still posts a high II, because one strong benchmark
-linearly cancels one weak one. For science, a hallucinated citation or a confidently wrong
-intermediate result can invalidate the whole task — the failure mode a soft-minimum
-punishes and an average does not.</li>
-<li><strong>Hallucination is nearly an afterthought.</strong> Non-hallucination carries only
-5% of the total weight inside AA-Omniscience's 15% share. Here it is a mandatory benchmark
-and a dominant term whenever it is bad.</li>
-<li><strong>The weighting emphasises generalist agentic work, not science.</strong> Agents
-plus the generalist members — AA-Briefcase v1.1 (15%), GDP.pdf (10%) and now
-AutomationBench-AA (5%) — put roughly half the Index on knowledge-work and business
-deliverables, while GPQA Diamond, the one graduate-science benchmark, has been gone
-since the v4.2 revision. The skill mix measures office work, not scientific
-capability.</li>
-<li><strong>Ad hoc normalisations.</strong> The GDPval clamp((Elo − 500)/2000) mapping and
-the frozen Elo reference points are parameters AA itself may adjust over time, so index
-values are not perfectly comparable across model vintages.</li>
-</ul>
-
-{gpt_section}
+<h2>How this differs from AA's Intelligence Index v5.0</h2>
+<p>AA's v5.0 index covers Knowledge Work, Coding, Science and General, at 25% each.
+Its weights and task counts, parsed for this run, are shown below. AA-Omniscience's
+15% share comprises 10% accuracy and 5% non-hallucination; SoftMinZ instead takes the
+published Omniscience Index as one of six science-focused dimensions.</p>
+<table><thead><tr><th>AA v5 evaluation</th><th class="num">Live II weight</th>
+<th class="num">Task count</th></tr></thead><tbody>{all_weight_rows}</tbody></table>
+<p>We use AA's weights only to undo its cost weighting. Our performance index uses
+sample z-scores across a strict complete cohort and a nonlinear soft-minimum, rather
+than AA's weighted average of normalized evaluation scores. Our narrower battery
+emphasizes scientific computing and intentionally omits knowledge-work deliverable
+benchmarks such as AA-Briefcase and AutomationBench from performance scoring.</p>
 
 <h2>Reproducibility</h2>
 <p class="note">Scraped scores are cross-checked against overlapping scores on each
 evaluation page, using JSON-LD score rows when available and the evaluation-page model
 payload otherwise. A benchmark whose parsed values disagree is rejected rather than
-published; missing comparison data is reported as unavailable, never as validated.
+published; missing comparison data is reported as unavailable, never as validated, and aborts generation.
 Intelligence Index weights and task counts used in the cost model are parsed live from
 the <a href="{II_METHOD_URL}">AA methodology page</a> on every run (today: {esc(ii_source)});
 if that page is unreachable or its table cannot be parsed, the run aborts rather than
@@ -978,18 +927,18 @@ methodology and code in the <a href="{REPO_URL}">repository</a></footer>
 """
 
 
-def main():
+def main(max_age_h=12):
     DATA.mkdir(exist_ok=True)
     DOCS.mkdir(exist_ok=True)
 
-    ii_weights, ii_source = load_ii_benchmarks(DATA)
+    ii_weights, ii_source = load_ii_benchmarks(DATA, max_age_h=max_age_h)
     print(f'II weights: {ii_source}', file=sys.stderr)
     for slug in sorted(ii_weights):
         w = ii_weights[slug]
         print(f"  {slug:48s} weight={w['weight']:.2f} tasks={w['tasks']}", file=sys.stderr)
 
     print('Scraping Artificial Analysis...', file=sys.stderr)
-    models, report = scrape(ii_weights=ii_weights)
+    models, report = scrape(max_age_h=max_age_h, ii_weights=ii_weights)
     print(f'{len(models)} models scraped', file=sys.stderr)
     _watch_analyst_agent(models)
     rejected = [k for k, v in report.items()
@@ -1041,4 +990,7 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--fresh', action='store_true', help='bypass all source caches')
+    args = parser.parse_args()
+    main(max_age_h=0 if args.fresh else 12)
