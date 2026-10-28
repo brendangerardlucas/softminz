@@ -4,40 +4,47 @@ Softminz ranks models by **SoftMinZ**, a soft-minimum of standardized benchmark
 scores, against **cost per expensive agentic task**. This version follows the
 Artificial Analysis Intelligence Index **v5.0** transition (2026-10-28).
 
-## Performance: exactly six benchmarks
+## Performance: seven z-components from six benchmarks
 
 1. [Terminal-Bench 4.0](https://artificialanalysis.ai/evaluations/terminalbench-v4-0)
 2. [FrontierCode 2.0](https://artificialanalysis.ai/evaluations/frontiercode-2-0)
-3. [AA-Omniscience v1.1](https://artificialanalysis.ai/evaluations/omniscience)
+3. [AA-Omniscience v1.1](https://artificialanalysis.ai/evaluations/omniscience):
+   **accuracy** and **non-hallucination rate**, two separate components
 4. [HLE-Diamond](https://artificialanalysis.ai/evaluations/hle-diamond)
 5. [CritPt v2 (Hard Subset)](https://artificialanalysis.ai/evaluations/critpt)
 6. [Terminal-Bench-Science 0.1](https://artificialanalysis.ai/evaluations/terminal-bench-science)
 
-AA-Omniscience v1.1 contributes its **published Omniscience Index**: correct answers
-are rewarded, incorrect answers penalized and abstentions neutral. It is **one**
-dimension, not separate accuracy and non-hallucination dimensions.
+AA-Omniscience v1.1 contributes its measured **accuracy** and
+**non-hallucination rate** (1 minus AA’s hallucination rate). Each has its own mean,
+sample standard deviation and z-score. The combined Omniscience Index is **not**
+an additional input. Five other benchmarks plus these two rates give **seven
+components**, all required for a model to score.
 
-A model must have a finite score on **all six** benchmarks to be ranked or contribute
-to **any** normalization pool. Every benchmark is z-scored across the same complete
+A model must have a finite score on **all seven** components to be ranked or contribute
+to **any** normalization pool. Every component is z-scored across the same complete
 cohort, using the sample standard deviation (n − 1). Then:
 
 ```text
 z_b = (score_b − cohort_mean_b) / cohort_sample_SD_b
-SoftMinZ = −ln[(1/6) × Σ_b exp(−z_b)]
+Z = Σ_(i=1…7) exp(−z_i)
+SoftMinZ = −ln(Z / 7)
 ```
 
-All six dimensions have equal standing after normalization. AA Intelligence Index
-weights do not weight the performance score. SoftMinZ lies between a model’s
-worst and mean z-score; it rewards balanced performance and discounts weakness.
-Partial profiles are excluded, never imputed. Tiny cohorts or zero-variance
-required dimensions abort generation before output replacement.
+Each component contributes one Boltzmann factor to the partition sum; dividing
+by seven takes their **mean** before the negative logarithm. This is **not a
+linear weighted average of z-scores**. Its local influence is
+∂SoftMinZ/∂z_i = exp(−z_i)/Z, so weak dimensions exert more influence.
+AA’s 10% accuracy / 5% non-hallucination weighting is not copied into performance.
+SoftMinZ lies between a model’s worst and mean z-score; it rewards balanced
+performance and discounts weakness. Partial profiles are excluded, never imputed.
+Tiny cohorts or zero-variance required dimensions abort before output replacement.
 
 This replaces the previous battery: original HLE, original CritPt, SciCode, AA-LCR
-and the standalone non-hallucination dimension are no longer used. Older versions
+are no longer used. The current v1.1 non-hallucination rate is explicitly included. Older versions
 (FrontierCode 1.x, AA-Omniscience v1, original HLE/CritPt) and full CritPt v2 cannot
-fill missing measurements for the named versions or hard subset. **The new scores
-and ranks are not directly comparable with the old battery.** AnalystAgent remains
-watch-only, never silently added to the six-benchmark score.
+fill missing measurements for the named versions or hard subset. **The new scores and ranks are not directly comparable with the old battery
+or the initial six-component v5 version that used the combined Omniscience Index.** AnalystAgent remains
+watch-only, never silently added to the seven-component score.
 
 ## Cost: expensive workloads, same formula
 

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """SoftMinZ public model-value watch — one script, one webpage.
 
-Scrapes Artificial Analysis (free, no key), z-scores a fixed 6-benchmark
-battery chosen for scientific-computing relevance, computes the SoftMinZ
+Scrapes Artificial Analysis (free, no key), z-scores seven components
+from six benchmarks chosen for scientific-computing relevance, computes the SoftMinZ
 index (a soft-minimum of the z-scores over the fully-benched cohort),
 prices each model with an agentic-workload cost per task derived from raw
 AA cost data, draws the SoftMinZ-vs-cost Pareto frontier, and emits a
@@ -65,13 +65,15 @@ REPO_URL = 'https://github.com/brendangerardlucas/softminz'
 
 # AA Intelligence Index v5.0 scientific-computing subset (2026-10-28).
 # Never backfill a versioned benchmark with an older evaluation.
-BATTERY = ['terminalbench_v40', 'frontiercode_v20', 'omniscience_v11',
-           'hle_diamond', 'critpt_v2_hard', 'terminalbench_science']
+BATTERY = ['terminalbench_v40', 'frontiercode_v20', 'omniscience_v11_accuracy',
+           'omniscience_v11_non_hallucination', 'hle_diamond',
+           'critpt_v2_hard', 'terminalbench_science']
 # STRICT COMPLETENESS: partial profiles neither score nor enter any z-pool.
 BENCH_LABEL = {
     'terminalbench_v40': 'Terminal-Bench 4.0',
     'frontiercode_v20': 'FrontierCode 2.0',
-    'omniscience_v11': 'AA-Omniscience v1.1',
+    'omniscience_v11_accuracy': 'AA-Omniscience v1.1 — Accuracy',
+    'omniscience_v11_non_hallucination': 'AA-Omniscience v1.1 — Non-hallucination',
     'hle_diamond': 'HLE-Diamond',
     'critpt_v2_hard': 'CritPt v2 (Hard Subset)',
     'terminalbench_science': 'Terminal-Bench-Science 0.1',
@@ -79,7 +81,8 @@ BENCH_LABEL = {
 BENCH_URL = {
     'terminalbench_v40': BASE + 'terminalbench-v4-0',
     'frontiercode_v20': BASE + 'frontiercode-2-0',
-    'omniscience_v11': BASE + 'omniscience',
+    'omniscience_v11_accuracy': BASE + 'omniscience',
+    'omniscience_v11_non_hallucination': BASE + 'omniscience',
     'hle_diamond': BASE + 'hle-diamond',
     'critpt_v2_hard': BASE + 'critpt',
     'terminalbench_science': BASE + 'terminal-bench-science',
@@ -87,7 +90,8 @@ BENCH_URL = {
 FIELD_MAP = {
     'terminalbench_v40': 'terminalBench40',
     'frontiercode_v20': 'frontierCode20',
-    'omniscience_v11': 'omniscience',
+    'omniscience_v11_accuracy': 'omniscienceAccuracy',
+    'omniscience_v11_non_hallucination': 'omniscienceNonHallucination',
     'hle_diamond': 'hleDiamond',
     'critpt_v2_hard': 'critptAgenticHard',
     'terminalbench_science': 'terminalBenchScience',
@@ -183,7 +187,10 @@ def _fetch_cost_breakdown(records, max_age_h=12):
 PAGES = {
     'terminalbench-v4-0': ('terminalbench_v40', 'Terminal-Bench 4.0'),
     'frontiercode-2-0': ('frontiercode_v20', 'FrontierCode 2.0'),
-    'omniscience': ('omniscience_v11', 'AA-Omniscience v1.1 Index'),
+    'omniscience': [
+        ('omniscience_v11_accuracy', 'AA-Omniscience v1.1 Accuracy'),
+        ('omniscience_v11_non_hallucination', 'AA-Omniscience v1.1 Non-Hallucination Rate'),
+    ],
     'hle-diamond': ('hle_diamond', 'HLE-Diamond'),
     'critpt': ('critpt_v2_hard', 'CritPt v2 (Hard Subset)'),
     'terminal-bench-science': ('terminalbench_science', 'Terminal-Bench-Science 0.1'),
@@ -320,6 +327,8 @@ SCORE_SLUGS = {
     'critptAgenticHard': 'critpt-v2-hard',
     'terminalBenchScience': 'terminal-bench-science',
     'analystAgent': 'aa-analyst-agent',
+    'omniscienceAccuracy': 'omniscience-accuracy',
+    'omniscienceNonHallucination': 'omniscience-non-hallucination',
 }
 
 
@@ -333,7 +342,20 @@ def _score_value(record, key):
     if not is_number(value):
         scores = record.get('scores')
         value = scores.get(SCORE_SLUGS.get(key, key)) if isinstance(scores, dict) else None
-    return value if is_number(value) else None
+    # Evaluation pages publish current v1.1 accuracy and hallucination rate
+    # directly in this breakdown. Never use omniscienceV1 or its old total.
+    components = ('omniscienceAccuracy', 'omniscienceNonHallucination')
+    if not is_number(value) and key in components:
+        breakdown = record.get('omniscienceBreakdown')
+        if isinstance(breakdown, dict):
+            if key == 'omniscienceAccuracy':
+                value = breakdown.get('accuracy')
+            else:
+                rate = breakdown.get('hallucinationRate')
+                value = 1. - rate if is_number(rate) and 0. <= rate <= 1. else None
+    if not is_number(value) or (key in components and not 0. <= value <= 1.):
+        return None
+    return value
 
 
 def extract_cost_split(record):
@@ -445,37 +467,47 @@ def scrape(max_age_h=12, ii_weights=None):
     # the evaluation page's own model payload. AA's JSON-LD now sometimes
     # contains only Dataset metadata, without any numeric score rows.
     # Mismatches reject that benchmark's values.
-    for slug, (field, label) in PAGES.items():
+    for slug, page_checks in PAGES.items():
+        checks = page_checks if isinstance(page_checks, list) else [page_checks]
+        def report_key(field):
+            return f'{slug}/{field}' if len(checks) > 1 else slug
         try:
             raw = fetch(BASE + slug, DATA / f'{slug}.html', max_age_h)
-            truth = jsonld_scores(raw, label)
-            source = 'JSON-LD'
-            if not truth:
-                key = FIELD_MAP[field]
-                truth = {s: value
-                         for s, rec in extract_records(flight(raw)).items()
-                         if (value := _score_value(rec, key)) is not None}
-                source = 'evaluation-page payload (JSON-LD score rows unavailable)'
-            checked = bad = 0
-            for s, exp in truth.items():
-                got = models.get(s, {}).get(field)
-                if got is None:
-                    continue
-                checked += 1
-                if abs(got - exp) > 1e-6:
-                    bad += 1
-            if checked and bad:
-                # reject: strip this field from every model rather than
-                # publish scores that disagree with AA's evaluation page
-                for s in models:
-                    models[s].pop(field, None)
-                report[slug] = f'REJECTED ({bad}/{checked} mismatched vs {source})'
-            elif not checked:
-                report[slug] = 'validation UNAVAILABLE (no overlapping source scores)'
-            else:
-                report[slug] = f'validated ({checked} checked vs {source})'
-        except Exception as e:
-            report[slug] = f'validation FAILED: {e}'
+        except Exception as exc:
+            for field, label in checks:
+                report[report_key(field)] = f'validation FAILED: {exc}'
+            time.sleep(0.5)
+            continue
+        evaluation_records = None
+        for field, label in checks:
+            key = report_key(field)
+            try:
+                truth = jsonld_scores(raw, label)
+                source = 'JSON-LD'
+                if not truth:
+                    if evaluation_records is None:
+                        evaluation_records = extract_records(flight(raw))
+                    truth = {s: value for s, rec in evaluation_records.items()
+                             if (value := _score_value(rec, FIELD_MAP[field])) is not None}
+                    source = 'evaluation-page payload (JSON-LD score rows unavailable)'
+                checked = bad = 0
+                for s, exp in truth.items():
+                    got = models.get(s, {}).get(field)
+                    if got is None:
+                        continue
+                    checked += 1
+                    if abs(got - exp) > 1e-6:
+                        bad += 1
+                if checked and bad:
+                    for s in models:
+                        models[s].pop(field, None)
+                    report[key] = f'REJECTED ({bad}/{checked} mismatched vs {source})'
+                elif not checked:
+                    report[key] = 'validation UNAVAILABLE (no overlapping source scores)'
+                else:
+                    report[key] = f'validated ({checked} checked vs {source})'
+            except Exception as exc:
+                report[key] = f'validation FAILED: {exc}'
         time.sleep(0.5)
     return dict(models), report
 
@@ -566,7 +598,7 @@ def _watch_analyst_agent(models):
 
 
 def zscore_battery(models):
-    """Normalize every dimension over the same complete cohort; score all six or none."""
+    """Normalize every dimension over the same complete cohort; score all components or none."""
     rows = []
     for slug, d in models.items():
         r = {'slug': slug, 'name': d.get('name', slug)}
@@ -766,7 +798,7 @@ def build_html(ranked, front, zstats, report, models, img_b64, ii_weights, ii_so
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>LLM Index for Scientific Computing</title>
-<meta name="description" content="SoftMinZ — a soft-minimum index over a six-benchmark AA v5 battery chosen for scientific-computing relevance, ranked against raw cost per agentic task. Only models evaluated on every battery benchmark are scored. Updated daily from Artificial Analysis data.">
+<meta name="description" content="SoftMinZ — a soft-minimum index over a seven-component AA v5 battery chosen for scientific-computing relevance, ranked against raw cost per agentic task. Only models evaluated on every battery benchmark are scored. Updated daily from Artificial Analysis data.">
 <meta property="og:title" content="LLM Index for Scientific Computing (SoftMinZ)">
 <meta property="og:description" content="Frontier LLMs ranked by a soft-minimum performance index for scientific computing vs raw cost per agentic task. Updated daily.">
 <meta property="og:type" content="website">
@@ -821,41 +853,46 @@ published cost data sort last.</p>
 </div>
 
 <h2>What SoftMinZ measures</h2>
-<p>SoftMinZ uses exactly six benchmarks from the
+<p>SoftMinZ uses seven separately standardized components from six benchmarks in the
 <a href="{II_METHOD_URL}">Artificial Analysis Intelligence Index v5.0</a>,
 selected for scientific computing:</p>
 <ul>{battery_items}</ul>
 <p>Terminal-Bench 4.0 measures general terminal execution; FrontierCode 2.0 tests
 changes to real software repositories; Terminal-Bench-Science 0.1 covers scientific
 terminal workflows. CritPt v2's hard subset and HLE-Diamond test difficult scientific
-reasoning and knowledge. AA-Omniscience v1.1 measures factual reliability, rewarding
-correct answers, penalizing incorrect answers and leaving abstentions neutral.</p>
-<p><strong>AA-Omniscience v1.1 is one scoring dimension: its published Omniscience
-Index.</strong> Accuracy and non-hallucination are not added as separate dimensions.
+reasoning and knowledge. AA-Omniscience v1.1 contributes two distinct inputs:
+<strong>accuracy</strong> and <strong>non-hallucination rate</strong> (1 minus AA’s
+hallucination rate). Each gets its own cohort mean, sample standard deviation and z-score.</p>
+<p><strong>The combined Omniscience Index is not scored.</strong> Accuracy and
+non-hallucination each enter the partition sum once, alongside the five other components.
 The former SciCode, AA-LCR, original HLE and original CritPt measurements are not used.
 FrontierCode 1.x, full CritPt v2 and AA-Omniscience v1 cannot substitute for the named
 versions or hard subset. Versions are not treated as interchangeable.</p>
 
 <h3>Complete cohort, sample z-scores</h3>
-<p>A model must have a finite score on <strong>all six benchmarks</strong> to receive
-SoftMinZ or contribute to any benchmark's normalization. Partial profiles are excluded
-from both the ranking and all z-score pools. Every benchmark uses the same complete
+<p>A model must have a finite score on <strong>all seven components</strong> to receive
+SoftMinZ or contribute to any component's normalization. Partial profiles are excluded
+from both the ranking and all z-score pools. Every component uses the same complete
 cohort of {n_scored} models, with its mean and sample standard deviation:</p>
 <div class="math">z<sub>b</sub> = (x<sub>b</sub> − μ<sub>b</sub>) / s<sub>b</sub>
 &nbsp; ; &nbsp; s<sub>b</sub> uses the n − 1 denominator</div>
-<div class="math">SoftMinZ = −ln [ (1/6) · Σ<sub>b=1…6</sub> exp(−z<sub>b</sub>) ]</div>
-<p>Each benchmark has equal standing after normalization; AA's Intelligence Index
-weights do <strong>not</strong> weight the performance score. The soft-minimum lies
+<div class="math">Z = Σ<sub>i=1…7</sub> exp(−z<sub>i</sub>)<br>
+SoftMinZ = −ln(Z / 7)</div>
+<p>The partition function is divided by seven to take the <strong>mean of the
+Boltzmann factors</strong>, not a linear average of the z-scores. AA's Intelligence
+Index weights do <strong>not</strong> weight the performance score. A component's
+local influence is exp(−z<sub>i</sub>) / Z, so weaker components matter more; there
+are no fixed 1/7 linear score weights. The soft-minimum lies
 between a model's worst and mean z-score. Weak dimensions receive more influence:
 balanced excellence is rewarded, while strength on one benchmark cannot linearly
 cancel weakness on another.</p>
 <p class="note">The battery, evaluation versions and cohort changed with AA v5.0.
-These values and rankings are not directly comparable with the previous seven-benchmark
-SoftMinZ series. Missing data is never filled with older benchmark versions.</p>
-<table><thead><tr><th>Benchmark</th><th class="num">Cohort mean</th>
+These values and rankings are not directly comparable with either the former
+pre-v5 battery or the initial six-component v5 score that used the combined Omniscience Index. Missing data is never filled with older benchmark versions.</p>
+<table><thead><tr><th>Score component</th><th class="num">Cohort mean</th>
 <th class="num">Sample SD</th></tr></thead><tbody>{stats_rows}</tbody></table>
-<p class="note">Raw score units are those published by AA: the Omniscience Index is
-in index points; the other five inputs are fractions. Z-scores remove this scale difference.
+<p class="note">All seven raw inputs are published score fractions. Omniscience accuracy and
+non-hallucination are used directly as separate rates, not reconstructed from the combined Index.
 If the cohort is too small or any required spread is zero, generation aborts rather than
 computing a partial-dimension index.</p>
 
@@ -896,8 +933,9 @@ its published cache-hit and pricing assumptions; they are not cache-free estimat
 <h2>How this differs from AA's Intelligence Index v5.0</h2>
 <p>AA's v5.0 index covers Knowledge Work, Coding, Science and General, at 25% each.
 Its weights and task counts, parsed for this run, are shown below. AA-Omniscience's
-15% share comprises 10% accuracy and 5% non-hallucination; SoftMinZ instead takes the
-published Omniscience Index as one of six science-focused dimensions.</p>
+15% share comprises 10% accuracy and 5% non-hallucination. SoftMinZ uses those two
+measured rates as independently standardized components, but does not copy AA’s 2:1
+performance weighting: every component enters the normalized partition sum once.</p>
 <table><thead><tr><th>AA v5 evaluation</th><th class="num">Live II weight</th>
 <th class="num">Task count</th></tr></thead><tbody>{all_weight_rows}</tbody></table>
 <p>We use AA's weights only to undo its cost weighting. Our performance index uses

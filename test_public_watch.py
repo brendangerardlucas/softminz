@@ -21,12 +21,14 @@ WEIGHTS = {
     'hle-diamond': {'weight': .10, 'tasks': 1000},
 }
 LEGACY = {
-    'terminalBench40': .54, 'frontierCode20': .42, 'omniscience': 29.5,
+    'terminalBench40': .54, 'frontierCode20': .42, 'omniscienceAccuracy': .4763333333333333, 'omniscienceNonHallucination': .6549968173138129,
     'hleDiamond': .47, 'critptAgenticHard': .645,
     'terminalBenchScience': .576, 'analystAgent': .42,
 }
 NESTED = {
     'terminalbench-4-0': .54, 'frontiercode-2-0': .42,
+    'omniscience-accuracy': .4763333333333333,
+    'omniscience-non-hallucination': .6549968173138129,
     'hle-diamond': .47, 'critpt-v2-hard': .645,
     'terminal-bench-science': .576, 'aa-analyst-agent': .42,
 }
@@ -50,17 +52,18 @@ def complete_models(count=6):
 
 
 class ScoreCompatibilityTests(unittest.TestCase):
-    def test_exact_six_versioned_dimensions(self):
-        self.assertEqual(w.BATTERY, ['terminalbench_v40', 'frontiercode_v20', 'omniscience_v11',
-                                    'hle_diamond', 'critpt_v2_hard', 'terminalbench_science'])
-        self.assertNotIn('non_hallucination_rate', w.BATTERY)
+    def test_exact_seven_versioned_components(self):
+        self.assertEqual(w.BATTERY, ['terminalbench_v40', 'frontiercode_v20', 'omniscience_v11_accuracy',
+                                    'omniscience_v11_non_hallucination', 'hle_diamond',
+                                    'critpt_v2_hard', 'terminalbench_science'])
+        self.assertNotIn('omniscience_v11', w.BATTERY)
         self.assertNotIn('scicode', w.BATTERY)
         self.assertNotIn('lcr', w.BATTERY)
 
     def test_nested_and_flat_values_agree(self):
         for key, expected in LEGACY.items():
             with self.subTest(key=key):
-                nested = dict(scores=NESTED, omniscience=29.5)
+                nested = dict(scores=NESTED, omniscience=99.)
                 self.assertEqual(w._score_value(nested, key), expected)
                 self.assertEqual(w._score_value(LEGACY, key), expected)
 
@@ -68,8 +71,27 @@ class ScoreCompatibilityTests(unittest.TestCase):
         old = dict(frontierCode=.99, hle=.99, critpt=.99,
                    critptAgentic=.99, omniscienceV1={'index': 99},
                    scores={'frontiercode': .99, 'humanitys-last-exam': .99, 'critpt': .99})
-        for field in ['frontierCode20', 'hleDiamond', 'critptAgenticHard', 'omniscience']:
+        for field in ['frontierCode20', 'hleDiamond', 'critptAgenticHard', 'omniscienceAccuracy', 'omniscienceNonHallucination']:
             self.assertIsNone(w._score_value(old, field), field)
+
+    def test_current_v11_breakdown_components_not_legacy_total(self):
+        record = {'omniscience': 99.,
+                  'omniscienceBreakdown': {'accuracy': .6, 'hallucinationRate': .25},
+                  'omniscienceV1': {'accuracy': .1, 'hallucinationRate': .9}}
+        self.assertEqual(w._score_value(record, 'omniscienceAccuracy'), .6)
+        self.assertEqual(w._score_value(record, 'omniscienceNonHallucination'), .75)
+        for old in [{'omniscience': 99.}, {'omniscienceV1': record['omniscienceV1']},
+                    {'omniscienceBreakdown': {'total': {'accuracy': .99, 'hallucinationRate': .01}}}]:
+            self.assertIsNone(w._score_value(old, 'omniscienceAccuracy'))
+            self.assertIsNone(w._score_value(old, 'omniscienceNonHallucination'))
+
+    def test_component_probability_bounds_and_zero(self):
+        for key,slug in [('omniscienceAccuracy','omniscience-accuracy'),
+                         ('omniscienceNonHallucination','omniscience-non-hallucination')]:
+            for bad in [-.1, 1.1, True, math.nan, math.inf]:
+                self.assertIsNone(w._score_value({'scores':{slug:bad}},key))
+            self.assertEqual(w._score_value({'scores':{slug:0.}},key),0.)
+            self.assertEqual(w._score_value({'scores':{slug:1.}},key),1.)
 
     def test_numeric_missing_zero_and_finite(self):
         for bad in (None, '0.3', True, False, math.nan, math.inf, -math.inf):
@@ -82,7 +104,12 @@ class ScoreCompatibilityTests(unittest.TestCase):
         common = dict(slug='test-model', name='Test', shortName='Test', deprecated=False,
                       isReasoning=True, isOpenWeights=False, contextWindowTokens=1000000,
                       intelligenceIndex=51., omniscience=29.5)
-        primary, evaluation = dict(common, scores=NESTED), dict(common, **{k: v for k, v in LEGACY.items() if k != 'omniscience'})
+        primary = dict(common, scores=NESTED)
+        evaluation = dict(common, **{k:v for k,v in LEGACY.items()
+                          if k not in ('omniscienceAccuracy','omniscienceNonHallucination')})
+        evaluation['omniscienceBreakdown'] = {'accuracy': .4763333333333333,
+                                              'hallucinationRate': 1-.6549968173138129}
+        evaluation['omniscienceV1'] = {'accuracy': .99, 'hallucinationRate': .99}
         def fetch(url, *args):
             return flight_page(primary if url == w.MODELS_PAGE else evaluation)
         with patch.object(w, 'fetch', side_effect=fetch), \
@@ -92,7 +119,7 @@ class ScoreCompatibilityTests(unittest.TestCase):
         for key in w.BATTERY:
             self.assertIsNotNone(models['test-model'].get(key), key)
         self.assertEqual(models['test-model']['analystAgent'], .42)
-        self.assertEqual(sum('validated (' in str(v) for v in report.values()), 7)
+        self.assertEqual(sum('validated (' in str(v) for v in report.values()), 8)
 
 
 class MethodologyAndCostTests(unittest.TestCase):
@@ -229,9 +256,54 @@ class CohortTests(unittest.TestCase):
             self.assertAlmostEqual(stats[b][1], statistics.stdev(range(6)))
         for r in ranked:
             zs = list(r['zscores'].values())
-            self.assertEqual(len(zs), 6)
+            self.assertEqual(len(zs), 7)
             self.assertLessEqual(min(zs) - .0051, r['softminz'])
             self.assertLessEqual(r['softminz'], statistics.mean(zs) + .0051)
+
+    def test_both_omni_components_mandatory_and_combined_index_ignored(self):
+        models = complete_models()
+        baseline = w.zscore_battery(models)
+        for field in ['omniscience_v11_accuracy','omniscience_v11_non_hallucination']:
+            partial = {b: 999. for b in w.BATTERY if b != field}
+            partial['omniscience_v11'] = 999.
+            models['missing-'+field] = partial
+        ranked, rows, stats = w.zscore_battery(models)
+        self.assertEqual(stats,baseline[2])
+        self.assertEqual(len(ranked),6)
+        self.assertTrue(all(r['softminz'] is None for r in rows if r['slug'].startswith('missing-')))
+        for model in models.values(): model['omniscience_v11'] = -999.
+        self.assertEqual(w.zscore_battery(models)[0],ranked)
+
+    def test_normalized_mean_of_seven_boltzmann_factors(self):
+        ranked, rows, stats = w.zscore_battery(complete_models())
+        for row in ranked:
+            zs=[row['zscores'][b] for b in w.BATTERY]
+            expected=-math.log(sum(math.exp(-z) for z in zs)/7)
+            self.assertEqual(row['softminz'],round(expected,2))
+            # Normalization is an additive ln(7), not a linear score average.
+            raw=-math.log(sum(math.exp(-z) for z in zs))
+            self.assertAlmostEqual(expected-raw,math.log(7))
+
+    def test_heterogeneous_profiles_are_not_linear_or_aa_weighted(self):
+        profiles = [list(range(8)), list(reversed(range(8))),
+                    [1,4,2,6,0,7,3,5], [6,1,7,0,5,2,4,3],
+                    [2,3,4,5,6,7,0,1], [4,0,5,1,6,2,7,3],
+                    [3,4,5,6,7,0,1,2]]
+        models = {f'm{i}': {b: profiles[j][i]/7 for j,b in enumerate(w.BATTERY)}
+                  for i in range(8)}
+        ranked, rows, stats = w.zscore_battery(models)
+        for row in ranked:
+            factors=[math.exp(-row['zscores'][b]) for b in w.BATTERY]
+            expected=-math.log(sum(factors)/7)
+            self.assertEqual(row['softminz'], round(expected,2))
+        row=next(r for r in ranked if r['slug']=='m0')
+        zs=[row['zscores'][b] for b in w.BATTERY]
+        linear=statistics.mean(zs)
+        factors=[math.exp(-z) for z in zs]
+        accuracy_i=w.BATTERY.index('omniscience_v11_accuracy')
+        aa_weighted=-math.log((sum(factors)+factors[accuracy_i])/8)
+        self.assertGreater(abs(row['softminz']-linear),.05)
+        self.assertGreater(abs(row['softminz']-aa_weighted),.02)
 
     def test_small_and_constant_cohorts_do_not_partially_score(self):
         for models in [complete_models(4), {f'm{i}': dict.fromkeys(w.BATTERY, 1.) for i in range(6)}]:
@@ -269,7 +341,7 @@ class PublicationGateTests(unittest.TestCase):
         page = w.build_html(ranked, w.pareto(ranked,'cost_task','softminz'), stats,
                             {}, models, 'dGVzdA==', WEIGHTS, 'test live')
         for label in w.BENCH_LABEL.values(): self.assertIn(label, page)
-        for obsolete in ('seven-benchmark battery', 'Why these seven', 'v4.3.2',
+        for obsolete in ('six-benchmark battery', 'one scoring dimension', 'v4.3.2',
                          'Why the GPT-5.6', 'mandatory non-hallucination'):
             self.assertNotIn(obsolete, page)
         self.assertIn('359', page)
