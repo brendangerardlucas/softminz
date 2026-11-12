@@ -31,6 +31,12 @@ NESTED = {
     'omniscience-non-hallucination': .6549968173138129,
     'hle-diamond': .47, 'critpt-v2-hard': .645,
     'terminal-bench-science': .576, 'aa-analyst-agent': .42,
+    'aa-briefcase': 1500.25, 'automationbench-aa': .5937591715646424,
+    'gdp-pdf': .21,
+}
+NEW_FLAT = {
+    'briefcaseElo': 1500.25, 'automationBenchPartialScore': .5937591715646424,
+    'gdpPdfAllPass': .21,
 }
 
 
@@ -45,9 +51,10 @@ def methodology_html(weights=WEIGHTS):
     return '<h2>Artificial Analysis Intelligence Index v5.0</h2><table>' + rows + '</table>'
 
 
-def complete_models(count=6):
+def complete_models(count=6, battery=None):
+    battery = w.BATTERY if battery is None else battery
     return {f'm{i}': dict(name=f'Model {i}', cost_task=i + 1,
-                         **{b: float(i) + j / 10 for j, b in enumerate(w.BATTERY)})
+                         **{b: float(i) + j / 10 for j, b in enumerate(battery)})
             for i in range(count)}
 
 
@@ -106,7 +113,8 @@ class ScoreCompatibilityTests(unittest.TestCase):
                       intelligenceIndex=51., omniscience=29.5)
         primary = dict(common, scores=NESTED)
         evaluation = dict(common, **{k:v for k,v in LEGACY.items()
-                          if k not in ('omniscienceAccuracy','omniscienceNonHallucination')})
+                          if k not in ('omniscienceAccuracy','omniscienceNonHallucination')},
+                          **NEW_FLAT)
         evaluation['omniscienceBreakdown'] = {'accuracy': .4763333333333333,
                                               'hallucinationRate': 1-.6549968173138129}
         evaluation['omniscienceV1'] = {'accuracy': .99, 'hallucinationRate': .99}
@@ -118,8 +126,10 @@ class ScoreCompatibilityTests(unittest.TestCase):
             models, report = w.scrape(ii_weights=WEIGHTS)
         for key in w.BATTERY:
             self.assertIsNotNone(models['test-model'].get(key), key)
+        for key in w.BATTERY_ALL:
+            self.assertIsNotNone(models['test-model'].get(key), key)
         self.assertEqual(models['test-model']['analystAgent'], .42)
-        self.assertEqual(sum('validated (' in str(v) for v in report.values()), 8)
+        self.assertEqual(sum('validated (' in str(v) for v in report.values()), 11)
 
 
 class MethodologyAndCostTests(unittest.TestCase):
@@ -368,10 +378,77 @@ class HeadToHeadTests(unittest.TestCase):
         self.assertIsNone(data['models'][0]['cost_task'])
 
     def test_panel_is_between_rankings_and_methodology(self):
-        models=complete_models(); ranked,rows,stats=w.zscore_battery(models)
-        page=w.build_html(ranked,[],stats,{},models,'dGVzdA==',WEIGHTS,'test')
+        models=complete_models(battery=w.BATTERY_ALL)
+        ranked,rows,stats=w.zscore_battery(models)
+        ranked_all,_,stats_all=w.zscore_battery(models,w.BATTERY_ALL)
+        page=w.build_html(ranked,[],stats,ranked_all,[],stats_all,{},models,'dGVzdA==',
+                          'dGVzdA==',WEIGHTS,'test')
         self.assertLess(page.index('id="rank-cost-table"'),page.index('id="head-to-head"'))
         self.assertLess(page.index('id="head-to-head"'),page.index('<h2>What SoftMinZ measures'))
+
+
+class AllBenchmarksTests(unittest.TestCase):
+    def test_all_battery_is_ten_components_with_split_omniscience(self):
+        self.assertEqual(w.BATTERY_ALL, w.BATTERY + ['briefcaseElo',
+                                                    'automationBenchPartialScore',
+                                                    'gdpPdfAllPass'])
+        self.assertEqual(len(w.BATTERY_ALL), 10)
+        self.assertIn('omniscience_v11_accuracy', w.BATTERY_ALL)
+        self.assertIn('omniscience_v11_non_hallucination', w.BATTERY_ALL)
+        self.assertNotIn('omniscience_v11', w.BATTERY_ALL)
+        self.assertNotIn('omniscience', w.BATTERY_ALL)
+
+    def test_new_fields_read_flat_and_nested_sources(self):
+        flat = dict(NEW_FLAT)
+        nested = {'scores': {'aa-briefcase': NEW_FLAT['briefcaseElo'],
+                             'automationbench-aa': NEW_FLAT['automationBenchPartialScore'],
+                             'gdp-pdf': NEW_FLAT['gdpPdfAllPass']}}
+        for key, val in NEW_FLAT.items():
+            self.assertEqual(w._score_value(flat, key), val)
+            self.assertEqual(w._score_value(nested, key), val)
+            self.assertIsNone(w._score_value({}, key))
+
+    def test_zscore_all_battery_scores_ten_components(self):
+        models = complete_models(battery=w.BATTERY_ALL)
+        ranked, rows, stats = w.zscore_battery(models, w.BATTERY_ALL)
+        self.assertEqual(set(stats), set(w.BATTERY_ALL))
+        self.assertEqual(len(ranked), 6)
+        for row in ranked:
+            self.assertEqual(len(row['zscores']), 10)
+            zs = [row['zscores'][b] for b in w.BATTERY_ALL]
+            self.assertAlmostEqual(row['softminz'],
+                                   round(-math.log(sum(math.exp(-z) for z in zs) / 10), 2))
+
+    def test_zscore_battery_defaults_to_science_subset(self):
+        models = complete_models()
+        ranked, rows, stats = w.zscore_battery(models)
+        self.assertEqual(set(stats), set(w.BATTERY))
+
+    def dual_page(self):
+        models = complete_models(battery=w.BATTERY_ALL)
+        ranked_sci, _, stats_sci = w.zscore_battery(models)
+        ranked_all, _, stats_all = w.zscore_battery(models, w.BATTERY_ALL)
+        return w.build_html(ranked_sci, w.pareto(ranked_sci, 'cost_task', 'softminz'),
+                            stats_sci, ranked_all,
+                            w.pareto(ranked_all, 'cost_task', 'softminz'), stats_all,
+                            {}, models, 'dGVzdA==', 'dGVzdA==', WEIGHTS, 'test live')
+
+    def test_html_renders_both_views_with_all_benchmarks_default(self):
+        page = self.dual_page()
+        for vid in ('id="view-all"', 'id="view-sci"', 'id="set-all-anchor"',
+                    'id="set-sci-anchor"', 'id="all9-smz-table"',
+                    'id="all9-cost-table"', 'id="rank-smz-table"',
+                    'id="rank-cost-table"'):
+            self.assertIn(vid, page)
+        self.assertIn('#view-sci { display:none; }', page)
+        self.assertEqual(page.count('<td>Model '), 24)
+        self.assertIn('ten components', page)
+        for label in ('AA-Briefcase v1.1', 'AutomationBench-AA', 'GDP.pdf'):
+            self.assertIn(label, page)
+
+    def test_html_embeds_both_charts(self):
+        page = self.dual_page()
+        self.assertEqual(page.count('data:image/png;base64,dGVzdA=='), 2)
 
 
 class PublicationGateTests(unittest.TestCase):
@@ -399,15 +476,19 @@ class PublicationGateTests(unittest.TestCase):
             self.check_aborts_before_artifacts({}, models)
 
     def test_current_documentation_is_rendered(self):
-        models = complete_models(); ranked, rows, stats = w.zscore_battery(models)
+        models = complete_models(battery=w.BATTERY_ALL)
+        ranked, rows, stats = w.zscore_battery(models)
+        ranked_all, _, stats_all = w.zscore_battery(models, w.BATTERY_ALL)
         page = w.build_html(ranked, w.pareto(ranked,'cost_task','softminz'), stats,
-                            {}, models, 'dGVzdA==', WEIGHTS, 'test live')
+                            ranked_all, w.pareto(ranked_all,'cost_task','softminz'),
+                            stats_all, {}, models, 'dGVzdA==', 'dGVzdA==',
+                            WEIGHTS, 'test live')
         for label in w.BENCH_LABEL.values(): self.assertIn(label, page)
         for obsolete in ('six-benchmark battery', 'one scoring dimension', 'v4.3.2',
                          'Why the GPT-5.6', 'mandatory non-hallucination'):
             self.assertNotIn(obsolete, page)
         self.assertIn('359', page)
-        self.assertEqual(page.count('<td>Model '), 12)
+        self.assertEqual(page.count('<td>Model '), 24)
 
 
 if __name__ == '__main__':

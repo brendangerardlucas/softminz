@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """SoftMinZ public model-value watch — one script, one webpage.
 
-Scrapes Artificial Analysis (free, no key), z-scores seven components
-from six benchmarks chosen for scientific-computing relevance, computes the SoftMinZ
+Scrapes Artificial Analysis (free, no key), z-scores ten components
+from nine benchmarks for the default all-benchmarks battery plus seven
+components from six benchmarks for the science-subset battery, computes the SoftMinZ
 index (a soft-minimum of the z-scores over the fully-benched cohort),
 prices each model with an agentic-workload cost per task derived from raw
 AA cost data, draws the SoftMinZ-vs-cost Pareto frontier, and emits a
@@ -77,6 +78,9 @@ BENCH_LABEL = {
     'hle_diamond': 'HLE-Diamond',
     'critpt_v2_hard': 'CritPt v2 (Hard Subset)',
     'terminalbench_science': 'Terminal-Bench-Science 0.1',
+    'briefcaseElo': 'AA-Briefcase v1.1',
+    'automationBenchPartialScore': 'AutomationBench-AA',
+    'gdpPdfAllPass': 'GDP.pdf',
 }
 BENCH_URL = {
     'terminalbench_v40': BASE + 'terminalbench-v4-0',
@@ -86,6 +90,9 @@ BENCH_URL = {
     'hle_diamond': BASE + 'hle-diamond',
     'critpt_v2_hard': BASE + 'critpt',
     'terminalbench_science': BASE + 'terminal-bench-science',
+    'briefcaseElo': BASE + 'aa-briefcase',
+    'automationBenchPartialScore': BASE + 'automationbench-aa',
+    'gdpPdfAllPass': BASE + 'gdp-pdf',
 }
 FIELD_MAP = {
     'terminalbench_v40': 'terminalBench40',
@@ -95,6 +102,9 @@ FIELD_MAP = {
     'hle_diamond': 'hleDiamond',
     'critpt_v2_hard': 'critptAgenticHard',
     'terminalbench_science': 'terminalBenchScience',
+    'briefcaseElo': 'briefcaseElo',
+    'automationBenchPartialScore': 'automationBenchPartialScore',
+    'gdpPdfAllPass': 'gdpPdfAllPass',
     'intelligence_index': 'intelligenceIndex',
     'analystAgent': 'analystAgent',  # watch-only, never a scoring dimension
 }
@@ -194,6 +204,9 @@ PAGES = {
     'hle-diamond': ('hle_diamond', 'HLE-Diamond'),
     'critpt': ('critpt_v2_hard', 'CritPt v2 (Hard Subset)'),
     'terminal-bench-science': ('terminalbench_science', 'Terminal-Bench-Science 0.1'),
+    'aa-briefcase': ('briefcaseElo', 'AA-Briefcase'),
+    'automationbench-aa': ('automationBenchPartialScore', 'AutomationBench-AA'),
+    'gdp-pdf': ('gdpPdfAllPass', 'GDP.pdf'),
     'artificial-analysis-intelligence-index': ('intelligence_index', 'Intelligence Index'),
 }
 
@@ -330,7 +343,16 @@ SCORE_SLUGS = {
     'analystAgent': 'aa-analyst-agent',
     'omniscienceAccuracy': 'omniscience-accuracy',
     'omniscienceNonHallucination': 'omniscience-non-hallucination',
+    'briefcaseElo': 'aa-briefcase',
+    'automationBenchPartialScore': 'automationbench-aa',
+    'gdpPdfAllPass': 'gdp-pdf',
 }
+
+# Full AA v5 suite: the seven science components plus the three remaining
+# benchmark components. Omniscience still contributes accuracy and
+# non-hallucination separately, so nine benchmarks yield ten components.
+BATTERY_ALL = BATTERY + ['briefcaseElo', 'automationBenchPartialScore',
+                         'gdpPdfAllPass']
 
 
 def is_number(value):
@@ -598,12 +620,12 @@ def _watch_analyst_agent(models):
     return n
 
 
-def zscore_battery(models):
+def zscore_battery(models, battery=BATTERY):
     """Normalize every dimension over the same complete cohort; score all components or none."""
     rows = []
     for slug, d in models.items():
         r = {'slug': slug, 'name': d.get('name', slug)}
-        for f in BATTERY:
+        for f in battery:
             r[f] = d.get(f)
         r['cost_task'] = d.get('cost_task')
         r['ii'] = d.get('intelligence_index')
@@ -612,9 +634,9 @@ def zscore_battery(models):
     # z-pools: STRICT — only models with the complete battery contribute
     # to the mean/SD (partial profiles neither receive a score nor move
     # the statistics).
-    complete = [r for r in rows if all(is_number(r.get(f)) for f in BATTERY)]
+    complete = [r for r in rows if all(is_number(r.get(f)) for f in battery)]
     zstats = {}
-    for f in BATTERY:
+    for f in battery:
         vals = [r[f] for r in complete]
         if len(vals) >= 5:
             mu = sum(vals) / len(vals)
@@ -626,15 +648,16 @@ def zscore_battery(models):
             if sd > 0:
                 zstats[f] = (mu, sd)
 
+    n = len(battery)
     for r in rows:
         r['zscores'] = {}
-        for f in BATTERY:
+        for f in battery:
             if is_number(r.get(f)) and f in zstats:
                 r['zscores'][f] = (r[f] - zstats[f][0]) / zstats[f][1]
-        r['battery_ok'] = all(is_number(r.get(f)) for f in BATTERY)
-        if r['battery_ok'] and set(zstats) == set(BATTERY):
+        r['battery_ok'] = all(is_number(r.get(f)) for f in battery)
+        if r['battery_ok'] and set(zstats) == set(battery):
             zs = list(r['zscores'].values())
-            r['softminz'] = round(-math.log(sum(math.exp(-z) for z in zs) / len(zs)), 2)
+            r['softminz'] = round(-math.log(sum(math.exp(-z) for z in zs) / n), 2)
         else:
             r['softminz'] = None
 
@@ -741,6 +764,31 @@ tbody tr:hover { background:#eaf1f6; }
 #rank-cost-anchor:target ~ .sortctl #ranknote { display:none; }
 #rank-cost-anchor:target ~ .sortctl #ranknote-cost { display:inline; }
 #ranknote-cost { display:none; color:var(--mut); font-size:13px; }
+/* No-JS benchmark-set toggle: :target swaps the all-benchmarks view (default)
+   with the science-subset view. Order inside #ranking: set anchors, set
+   .sortctl, then #view-all and #view-sci. */
+#set-all-anchor, #set-sci-anchor { position:relative; top:-90px; visibility:hidden; }
+#view-sci { display:none; }
+#set-sci-anchor:target ~ #view-sci { display:block; }
+#set-sci-anchor:target ~ #view-all { display:none; }
+#set-sci-anchor:target ~ .sortctl .seg a[href="#set-sci-anchor"] { background:var(--accent); color:#fff; font-weight:600; }
+#set-sci-anchor:target ~ .sortctl .seg a[href="#set-all-anchor"] { background:#fff; color:var(--ink); font-weight:500; }
+#setnote-all { color:var(--mut); font-size:13px; }
+#setnote-sci { display:none; color:var(--mut); font-size:13px; }
+#set-sci-anchor:target ~ .sortctl #setnote-all { display:none; }
+#set-sci-anchor:target ~ .sortctl #setnote-sci { display:inline; }
+/* Sort toggle inside the all-benchmarks view. Order inside #view-all:
+   anchor spans, then .sortctl, then both tables. */
+#all9-smz-anchor, #all9-cost-anchor { position:relative; top:-90px; visibility:hidden; }
+#all9-cost-table { display:none; }
+#all9-cost-anchor:target ~ #all9-cost-table { display:block; }
+#all9-cost-anchor:target ~ #all9-smz-table { display:none; }
+#all9-cost-anchor:target ~ .sortctl .seg a[href="#all9-cost-anchor"] { background:var(--accent); color:#fff; font-weight:600; }
+#all9-cost-anchor:target ~ .sortctl .seg a[href="#all9-smz-anchor"] { background:#fff; color:var(--ink); font-weight:500; }
+#all9-note { color:var(--mut); font-size:13px; }
+#all9-cost-anchor:target ~ .sortctl #all9-note { display:none; }
+#all9-cost-anchor:target ~ .sortctl #all9-note-cost { display:inline; }
+#all9-note-cost { display:none; color:var(--mut); font-size:13px; }
 .note { color:var(--mut); font-size:13.5px; }
 footer { margin-top:48px; padding-top:16px; border-top:1px solid var(--line);
          color:var(--mut); font-size:13.5px; }
@@ -834,7 +882,7 @@ def render_head_to_head(ranked):
     return f'''<section id="head-to-head" aria-labelledby="h2h-title">
 <h2 id="h2h-title">Head-to-head comparison</h2>
 <p class="note">Choose any two scored models, including models without cost data.
-All z-scores use the same {data['cohort_size']}-model complete cohort as the ranking;
+All z-scores are science-battery components over the same {data['cohort_size']}-model complete cohort as the science ranking;
 selecting a pair does not recalculate the normalization.</p>
 <fieldset id="h2h-controls" disabled><legend>Choose models</legend>
 <div class="h2h-controls">
@@ -860,14 +908,19 @@ Differences use unrounded z-scores, displayed to three decimals. These are stand
 </section>'''
 
 
-def build_html(ranked, front, zstats, report, models, img_b64, ii_weights, ii_source):
-    frontier_slugs = {r['slug'] for r in front}
-    n_scored = len(ranked)
+def build_html(ranked_sci, front_sci, zstats_sci, ranked_all, front_all,
+               zstats_all, report, models, img_b64_sci, img_b64_all,
+               ii_weights, ii_source):
+    frontier_sci = {r['slug'] for r in front_sci}
+    frontier_all = {r['slug'] for r in front_all}
+    n_scored = len(ranked_all)
     n_measured = len(models)
-    n_cost = sum(1 for r in ranked if r.get('cost_task') is not None)
+    n_cost = sum(1 for r in ranked_all if r.get('cost_task') is not None)
 
-    battery_items = ''.join(
+    battery_items_sci = ''.join(
         f'<li><a href="{BENCH_URL[b]}">{esc(BENCH_LABEL[b])}</a></li>' for b in BATTERY)
+    battery_items_all = ''.join(
+        f'<li><a href="{BENCH_URL[b]}">{esc(BENCH_LABEL[b])}</a></li>' for b in BATTERY_ALL)
     cost_rows = ''.join(
         f'<tr><td>{esc(COST_LABEL[b])}</td><td class="num">{ii_weights[b]["weight"]:.0%}</td>'
         f'<td class="num">{ii_weights[b]["tasks"]:,}</td></tr>' for b in sorted(II_COST_SLUGS))
@@ -875,14 +928,21 @@ def build_html(ranked, front, zstats, report, models, img_b64, ii_weights, ii_so
         f'<tr><td>{esc(COST_LABEL[b])}</td><td class="num">{info["weight"]:.0%}</td>'
         f'<td class="num">{info["tasks"]:,}</td></tr>' for b, info in ii_weights.items())
     cost_total_tasks = sum(ii_weights[b]['tasks'] for b in II_COST_SLUGS)
-    stats_rows = ''.join(
-        f'<tr><td>{esc(BENCH_LABEL[b])}</td><td class="num">{zstats[b][0]:.6f}</td>'
-        f'<td class="num">{zstats[b][1]:.6f}</td></tr>' for b in BATTERY)
+    stats_rows_sci = ''.join(
+        f'<tr><td>{esc(BENCH_LABEL[b])}</td><td class="num">{zstats_sci[b][0]:.6f}</td>'
+        f'<td class="num">{zstats_sci[b][1]:.6f}</td></tr>' for b in BATTERY)
+    stats_rows_all = ''.join(
+        f'<tr><td>{esc(BENCH_LABEL[b])}</td><td class="num">{zstats_all[b][0]:.6f}</td>'
+        f'<td class="num">{zstats_all[b][1]:.6f}</td></tr>' for b in BATTERY_ALL)
 
-    rows_smz = sorted(ranked, key=lambda r: (-r['softminz'], r['slug']))
-    rows_cost = sorted(ranked, key=lambda r: (r.get('cost_task') is None,
-                                              r.get('cost_task') or 0,
-                                              -r['softminz'], r['slug']))
+    rows_smz_sci = sorted(ranked_sci, key=lambda r: (-r['softminz'], r['slug']))
+    rows_cost_sci = sorted(ranked_sci, key=lambda r: (r.get('cost_task') is None,
+                                                     r.get('cost_task') or 0,
+                                                     -r['softminz'], r['slug']))
+    rows_smz_all = sorted(ranked_all, key=lambda r: (-r['softminz'], r['slug']))
+    rows_cost_all = sorted(ranked_all, key=lambda r: (r.get('cost_task') is None,
+                                                     r.get('cost_task') or 0,
+                                                     -r['softminz'], r['slug']))
 
     def table_rows(rows, frontier_slugs):
         out = []
@@ -903,9 +963,9 @@ def build_html(ranked, front, zstats, report, models, img_b64, ii_weights, ii_so
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>LLM Index for Scientific Computing</title>
-<meta name="description" content="SoftMinZ — a soft-minimum index over a seven-component AA v5 battery chosen for scientific-computing relevance, ranked against raw cost per agentic task. Only models evaluated on every battery benchmark are scored. Updated daily from Artificial Analysis data.">
+<meta name="description" content="SoftMinZ — a soft-minimum index over the full AA v5 battery (ten components from nine benchmarks) with a science-subset view, ranked against raw cost per agentic task. Only models evaluated on every battery benchmark are scored. Updated daily from Artificial Analysis data.">
 <meta property="og:title" content="LLM Index for Scientific Computing (SoftMinZ)">
-<meta property="og:description" content="Frontier LLMs ranked by a soft-minimum performance index for scientific computing vs raw cost per agentic task. Updated daily.">
+<meta property="og:description" content="Frontier LLMs ranked by a soft-minimum performance index over all AA benchmarks, with a science-subset view, vs raw cost per agentic task. Updated daily.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://softminz.org/">
 <meta property="og:image" content="https://softminz.org/softminz_pareto.png">
@@ -918,32 +978,77 @@ def build_html(ranked, front, zstats, report, models, img_b64, ii_weights, ii_so
 <p class="sub">Generated {TODAY} · {n_scored} models scored from {n_measured} measured by
 <a href="https://artificialanalysis.ai">Artificial Analysis</a> · raw cost data only</p>
 
-<img class="plot" alt="SoftMinZ vs cost per agentic task scatter with Pareto frontier"
-     src="data:image/png;base64,{img_b64}">
-<p class="note">Each point is a model: vertical position is the SoftMinZ performance index,
-horizontal position the raw cost of one agentic task (log scale). The dashed line is the
-Pareto frontier — models for which no cheaper model is at least as good. Frontier members are
-colour- and shape-coded; everything else is grey.</p>
-
 <h2>Full ranking</h2>
-<p class="note">Every scored model. Bold rows are Pareto frontier members. Use the two
-buttons to switch the ranking — they need no JavaScript. In cost view, models with no
-published cost data sort last.</p>
+<p class="note">Two benchmark sets. The default view ranks every scored model on the
+full nine-benchmark suite (ten components); the science-subset view uses seven
+components from six benchmarks. Use the buttons to switch sets — they need no
+JavaScript. Within each set, switch between the SoftMinZ and cost sorts. Bold rows
+are that view's Pareto frontier members. In cost view, models with no published
+cost data sort last.</p>
 <div id="ranking">
+<span id="set-all-anchor"></span><span id="set-sci-anchor"></span>
+<div class="sortctl">
+  <label>Benchmark set</label>
+  <span class="seg">
+    <a class="on" href="#set-all-anchor">All nine benchmarks</a><a href="#set-sci-anchor">Science subset</a>
+  </span>
+  <span id="setnote-all">Ten-component SoftMinZ over the full v5 suite.</span>
+  <span id="setnote-sci">Seven-component SoftMinZ over the science battery.</span>
+</div>
+<div id="view-all">
+<img class="plot" alt="Ten-component SoftMinZ vs cost per agentic task scatter with Pareto frontier"
+     src="data:image/png;base64,{img_b64_all}">
+<p class="note">Each point is a model: vertical position is the ten-component SoftMinZ
+performance index, horizontal position the raw cost of one agentic task (log scale).
+The dashed line is the Pareto frontier — models for which no cheaper model is at
+least as good. Frontier members are colour- and shape-coded; everything else is grey.</p>
+<span id="all9-smz-anchor"></span><span id="all9-cost-anchor"></span>
+<div class="sortctl">
+  <label>Rank by</label>
+  <span class="seg">
+    <a class="on" href="#all9-smz-anchor">Highest SoftMinZ</a><a href="#all9-cost-anchor">Lowest cost per task</a>
+  </span>
+  <span id="all9-note">Best model first (highest ten-component SoftMinZ).</span>
+  <span id="all9-note-cost">Cheapest model first (lowest cost per task).</span>
+</div>
+<div class="tblwrap" id="all9-smz-table">
+<table>
+{tbl_head}
+<tbody>
+{table_rows(rows_smz_all, frontier_all)}
+</tbody>
+</table>
+</div>
+<div class="tblwrap" id="all9-cost-table">
+<table>
+{tbl_head}
+<tbody>
+{table_rows(rows_cost_all, frontier_all)}
+</tbody>
+</table>
+</div>
+</div>
+<div id="view-sci">
+<img class="plot" alt="Seven-component science SoftMinZ vs cost per agentic task scatter with Pareto frontier"
+     src="data:image/png;base64,{img_b64_sci}">
+<p class="note">Each point is a model: vertical position is the seven-component science
+SoftMinZ performance index, horizontal position the raw cost of one agentic task (log
+scale). The dashed line is the Pareto frontier — models for which no cheaper model is
+at least as good. Frontier members are colour- and shape-coded; everything else is grey.</p>
 <span id="rank-smz-anchor"></span><span id="rank-cost-anchor"></span>
 <div class="sortctl">
   <label>Rank by</label>
   <span class="seg">
     <a class="on" href="#rank-smz-anchor">Highest SoftMinZ</a><a href="#rank-cost-anchor">Lowest cost per task</a>
   </span>
-  <span id="ranknote">Best model first (highest SoftMinZ).</span>
+  <span id="ranknote">Best model first (highest seven-component SoftMinZ).</span>
   <span id="ranknote-cost">Cheapest model first (lowest cost per task).</span>
 </div>
 <div class="tblwrap" id="rank-smz-table">
 <table>
 {tbl_head}
 <tbody>
-{table_rows(rows_smz, frontier_slugs)}
+{table_rows(rows_smz_sci, frontier_sci)}
 </tbody>
 </table>
 </div>
@@ -951,57 +1056,77 @@ published cost data sort last.</p>
 <table>
 {tbl_head}
 <tbody>
-{table_rows(rows_cost, frontier_slugs)}
+{table_rows(rows_cost_sci, frontier_sci)}
 </tbody>
 </table>
 </div>
 </div>
+</div>
 
-{render_head_to_head(ranked)}
+{render_head_to_head(ranked_sci)}
 
 <h2>What SoftMinZ measures</h2>
-<p>SoftMinZ uses seven separately standardized components from six benchmarks in the
-<a href="{II_METHOD_URL}">Artificial Analysis Intelligence Index v5.0</a>,
-selected for scientific computing:</p>
-<ul>{battery_items}</ul>
+<p>SoftMinZ standardizes each component across one complete cohort and takes a
+nonlinear soft-minimum in the
+<a href="{II_METHOD_URL}">Artificial Analysis Intelligence Index v5.0</a>.
+Two batteries are published side by side: the default <strong>all-benchmarks
+battery of ten components from nine benchmarks</strong>, and the
+<strong>science subset of seven components from six benchmarks</strong>.</p>
+
+<h3>Default: all nine benchmarks (ten components)</h3>
+<ul>{battery_items_all}</ul>
+<p>AA-Briefcase v1.1 contributes its Elo-style rating; AutomationBench-AA its partial
+score; GDP.pdf its all-pass rate. AA-Omniscience v1.1 contributes two distinct inputs:
+<strong>accuracy</strong> and <strong>non-hallucination rate</strong> (1 minus AA’s
+hallucination rate). Each of the ten components gets its own cohort mean, sample
+standard deviation and z-score.</p>
+<p>A model must have a finite score on <strong>all ten components</strong> to receive
+the all-benchmarks SoftMinZ or contribute to any of its normalization pools. Partial
+profiles are excluded from both the ranking and all z-score pools. Every component uses
+the same complete cohort of {n_scored} models, with its mean and sample standard deviation:</p>
+<div class="math">z<sub>b</sub> = (x<sub>b</sub> − μ<sub>b</sub>) / s<sub>b</sub>
+&nbsp; ; &nbsp; s<sub>b</sub> uses the n − 1 denominator</div>
+<div class="math">Z = Σ<sub>i=1…10</sub> exp(−z<sub>i</sub>)<br>
+SoftMinZ = −ln(Z / 10)</div>
+<table><thead><tr><th>Score component</th><th class="num">Cohort mean</th>
+<th class="num">Sample SD</th></tr></thead><tbody>{stats_rows_all}</tbody></table>
+
+<h3>Science subset (seven components)</h3>
+<ul>{battery_items_sci}</ul>
 <p>Terminal-Bench 4.0 measures general terminal execution; FrontierCode 2.0 tests
 changes to real software repositories; Terminal-Bench-Science 0.1 covers scientific
 terminal workflows. CritPt v2's hard subset and HLE-Diamond test difficult scientific
-reasoning and knowledge. AA-Omniscience v1.1 contributes two distinct inputs:
-<strong>accuracy</strong> and <strong>non-hallucination rate</strong> (1 minus AA’s
-hallucination rate). Each gets its own cohort mean, sample standard deviation and z-score.</p>
-<p><strong>The combined Omniscience Index is not scored.</strong> Accuracy and
-non-hallucination each enter the partition sum once, alongside the five other components.
-The former SciCode, AA-LCR, original HLE and original CritPt measurements are not used.
-FrontierCode 1.x, full CritPt v2 and AA-Omniscience v1 cannot substitute for the named
-versions or hard subset. Versions are not treated as interchangeable.</p>
-
-<h3>Complete cohort, sample z-scores</h3>
+reasoning and knowledge. AA-Omniscience v1.1 contributes
+<strong>accuracy</strong> and <strong>non-hallucination rate</strong> as separate components.</p>
 <p>A model must have a finite score on <strong>all seven components</strong> to receive
-SoftMinZ or contribute to any component's normalization. Partial profiles are excluded
-from both the ranking and all z-score pools. Every component uses the same complete
-cohort of {n_scored} models, with its mean and sample standard deviation:</p>
-<div class="math">z<sub>b</sub> = (x<sub>b</sub> − μ<sub>b</sub>) / s<sub>b</sub>
-&nbsp; ; &nbsp; s<sub>b</sub> uses the n − 1 denominator</div>
+the science-subset SoftMinZ. Same strict complete-cohort rule, same sample
+standard deviations:</p>
 <div class="math">Z = Σ<sub>i=1…7</sub> exp(−z<sub>i</sub>)<br>
 SoftMinZ = −ln(Z / 7)</div>
-<p>The partition function is divided by seven to take the <strong>mean of the
+<table><thead><tr><th>Score component</th><th class="num">Cohort mean</th>
+<th class="num">Sample SD</th></tr></thead><tbody>{stats_rows_sci}</tbody></table>
+
+<h3>Complete cohort, sample z-scores</h3>
+<p>The partition function is divided by the component count to take the <strong>mean of the
 Boltzmann factors</strong>, not a linear average of the z-scores. AA's Intelligence
-Index weights do <strong>not</strong> weight the performance score. A component's
+Index weights do <strong>not</strong> weight either performance score. A component's
 local influence is exp(−z<sub>i</sub>) / Z, so weaker components matter more; there
-are no fixed 1/7 linear score weights. The soft-minimum lies
+are no fixed linear score weights. The soft-minimum lies
 between a model's worst and mean z-score. Weak dimensions receive more influence:
 balanced excellence is rewarded, while strength on one benchmark cannot linearly
 cancel weakness on another.</p>
+<p><strong>The combined Omniscience Index is not scored in either battery.</strong> Accuracy and
+non-hallucination each enter the partition sum once, alongside the other components.
+The former SciCode, AA-LCR, original HLE and original CritPt measurements are not used.
+FrontierCode 1.x, full CritPt v2 and AA-Omniscience v1 cannot substitute for the named
+versions or hard subset. Versions are not treated as interchangeable.</p>
 <p class="note">The battery, evaluation versions and cohort changed with AA v5.0.
 These values and rankings are not directly comparable with either the former
 pre-v5 battery or the initial six-component v5 score that used the combined Omniscience Index. Missing data is never filled with older benchmark versions.</p>
-<table><thead><tr><th>Score component</th><th class="num">Cohort mean</th>
-<th class="num">Sample SD</th></tr></thead><tbody>{stats_rows}</tbody></table>
-<p class="note">All seven raw inputs are published score fractions. Omniscience accuracy and
-non-hallucination are used directly as separate rates, not reconstructed from the combined Index.
-If the cohort is too small or any required spread is zero, generation aborts rather than
-computing a partial-dimension index.</p>
+<p class="note">Omniscience accuracy and non-hallucination are used directly as separate rates,
+not reconstructed from the combined Index. Briefcase Elo and the AutomationBench-AA and
+GDP.pdf rates enter as published. If the cohort is too small or any required spread is
+zero, generation aborts rather than computing a partial-dimension index.</p>
 
 <h2>Cost per expensive agentic task</h2>
 <p>The cost axis is a <strong>separate workload selection</strong> from the science
@@ -1047,9 +1172,9 @@ performance weighting: every component enters the normalized partition sum once.
 <th class="num">Task count</th></tr></thead><tbody>{all_weight_rows}</tbody></table>
 <p>We use AA's weights only to undo its cost weighting. Our performance index uses
 sample z-scores across a strict complete cohort and a nonlinear soft-minimum, rather
-than AA's weighted average of normalized evaluation scores. Our narrower battery
-emphasizes scientific computing and intentionally omits knowledge-work deliverable
-benchmarks such as AA-Briefcase and AutomationBench from performance scoring.</p>
+than AA's weighted average of normalized evaluation scores. The default battery covers
+the same nine benchmarks as the Intelligence Index; the science-subset view narrows to
+the six benchmarks most relevant to scientific computing.</p>
 
 <h2>Reproducibility</h2>
 <p class="note">Scraped scores are cross-checked against overlapping scores on each
@@ -1092,22 +1217,35 @@ def main(max_age_h=12):
         print('FATAL: rejected/failed/unavailable pages:', ', '.join(rejected), file=sys.stderr)
         raise SystemExit(1)
 
-    ranked, all_rows, zstats = zscore_battery(models)
-    print(f'scored (battery-passing): {len(ranked)} of {len(all_rows)}', file=sys.stderr)
-    if not ranked or set(zstats) != set(BATTERY):
-        print('FATAL: no complete scored cohort/statistics; preserving published artifacts.',
+    ranked_sci, all_rows, zstats_sci = zscore_battery(models)
+    print(f'scored (science battery-passing): {len(ranked_sci)} of {len(all_rows)}', file=sys.stderr)
+    if not ranked_sci or set(zstats_sci) != set(BATTERY):
+        print('FATAL: no complete science scored cohort/statistics; preserving published artifacts.',
               file=sys.stderr)
         raise SystemExit(1)
 
-    front = pareto(ranked, 'cost_task', 'softminz')
-    print(f'pareto frontier: {len(front)} models', file=sys.stderr)
+    ranked_all, _, zstats_all = zscore_battery(models, BATTERY_ALL)
+    print(f'scored (all-benchmarks battery-passing): {len(ranked_all)} of {len(all_rows)}', file=sys.stderr)
+    if not ranked_all or set(zstats_all) != set(BATTERY_ALL):
+        print('FATAL: no complete all-benchmarks scored cohort/statistics; preserving published artifacts.',
+              file=sys.stderr)
+        raise SystemExit(1)
 
-    img = DATA / 'softminz_pareto.png'
-    make_chart(ranked, front, img)
-    img_b64 = base64.b64encode(img.read_bytes()).decode()
+    front_sci = pareto(ranked_sci, 'cost_task', 'softminz')
+    front_all = pareto(ranked_all, 'cost_task', 'softminz')
+    print(f'pareto frontier: {len(front_sci)} science models, {len(front_all)} all-benchmarks models', file=sys.stderr)
+
+    img_sci = DATA / 'softminz_pareto_science.png'
+    make_chart(ranked_sci, front_sci, img_sci)
+    img_b64_sci = base64.b64encode(img_sci.read_bytes()).decode()
     # Also publish the chart under docs/ so og:image has a real URL to
     # point at when the page link is shared.
-    (DOCS / 'softminz_pareto.png').write_bytes(img.read_bytes())
+    (DOCS / 'softminz_pareto_science.png').write_bytes(img_sci.read_bytes())
+
+    img_all = DATA / 'softminz_pareto.png'
+    make_chart(ranked_all, front_all, img_all)
+    img_b64_all = base64.b64encode(img_all.read_bytes()).decode()
+    (DOCS / 'softminz_pareto.png').write_bytes(img_all.read_bytes())
 
     # docs/CNAME is GitHub's custom-domain binding. The pipeline must preserve
     # it across regenerations or the custom domain silently detaches on the
@@ -1118,18 +1256,26 @@ def main(max_age_h=12):
         print('restored docs/CNAME (custom-domain binding)', file=sys.stderr)
 
     page = DOCS / 'index.html'
-    page.write_text(build_html(ranked, front, zstats, report, models, img_b64,
-                               ii_weights, ii_source))
+    page.write_text(build_html(ranked_sci, front_sci, zstats_sci, ranked_all,
+                               front_all, zstats_all, report, models,
+                               img_b64_sci, img_b64_all, ii_weights, ii_source))
     print(f'wrote {page} ({page.stat().st_size} bytes)', file=sys.stderr)
 
-    print('\nTOP 10 BY SOFTMINZ:')
-    for r in ranked[:10]:
+    print('\nTOP 10 BY ALL-BENCHMARKS SOFTMINZ:')
+    for r in ranked_all[:10]:
         c = fmt_cost(r.get('cost_task'))
         print(f"  {r['rank']:>3}. {r['name'][:36]:<36} SoftMinZ {r['softminz']:>6}  {c}/task")
-    print('\nPARETO FRONTIER (cheapest first):')
-    for r in front:
+    print('\nTOP 10 BY SCIENCE SOFTMINZ:')
+    for r in ranked_sci[:10]:
+        c = fmt_cost(r.get('cost_task'))
+        print(f"  {r['rank']:>3}. {r['name'][:36]:<36} SoftMinZ {r['softminz']:>6}  {c}/task")
+    print('\nPARETO FRONTIER ALL-BENCHMARKS (cheapest first):')
+    for r in front_all:
         print(f"  ${r['cost_task']:>7.4f}  SoftMinZ {r['softminz']:>6}  {r['name']}")
-    g = next((r for r in ranked if 'gemini-3-1-pro' in r['slug']), None)
+    print('\nPARETO FRONTIER SCIENCE (cheapest first):')
+    for r in front_sci:
+        print(f"  ${r['cost_task']:>7.4f}  SoftMinZ {r['softminz']:>6}  {r['name']}")
+    g = next((r for r in ranked_all if 'gemini-3-1-pro' in r['slug']), None)
     if g:
         print(f"\nGemini 3.1 Pro: rank {g['rank']}, SoftMinZ {g['softminz']}, {fmt_cost(g.get('cost_task'))}/task")
 

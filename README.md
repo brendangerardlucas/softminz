@@ -4,7 +4,9 @@ Softminz ranks models by **SoftMinZ**, a soft-minimum of standardized benchmark
 scores, against **cost per expensive agentic task**. This version follows the
 Artificial Analysis Intelligence Index **v5.0** transition (2026-10-28).
 
-## Performance: seven z-components from six benchmarks
+## Performance: ten z-components from nine benchmarks (default), seven from six (science subset)
+
+The default ranking uses the full AA v5 suite:
 
 1. [Terminal-Bench 4.0](https://artificialanalysis.ai/evaluations/terminalbench-v4-0)
 2. [FrontierCode 2.0](https://artificialanalysis.ai/evaluations/frontiercode-2-0)
@@ -13,25 +15,32 @@ Artificial Analysis Intelligence Index **v5.0** transition (2026-10-28).
 4. [HLE-Diamond](https://artificialanalysis.ai/evaluations/hle-diamond)
 5. [CritPt v2 (Hard Subset)](https://artificialanalysis.ai/evaluations/critpt)
 6. [Terminal-Bench-Science 0.1](https://artificialanalysis.ai/evaluations/terminal-bench-science)
+7. [AA-Briefcase v1.1](https://artificialanalysis.ai/evaluations/aa-briefcase): Elo-style rating
+8. [AutomationBench-AA](https://artificialanalysis.ai/evaluations/automationbench-aa): partial score
+9. [GDP.pdf](https://artificialanalysis.ai/evaluations/gdp-pdf): all-pass rate
 
-AA-Omniscience v1.1 contributes its measured **accuracy** and
-**non-hallucination rate** (1 minus AA’s hallucination rate). Each has its own mean,
-sample standard deviation and z-score. The combined Omniscience Index is **not**
-an additional input. Five other benchmarks plus these two rates give **seven
-components**, all required for a model to score.
+The site toggle switches between this default all-benchmarks ranking and the
+**science subset** (items 1–6 above: seven components). AA-Omniscience v1.1
+contributes its measured **accuracy** and **non-hallucination rate**
+(1 minus AA’s hallucination rate) as two separate components in **both**
+batteries, so nine benchmarks yield ten components.
+Each component has its own mean, sample standard deviation and z-score.
+The combined Omniscience Index is **not** an additional input in either battery.
 
-A model must have a finite score on **all seven** components to be ranked or contribute
+A model must have a finite score on **all ten** components (default battery) or
+**all seven** (science subset) to be ranked in that view or contribute
 to **any** normalization pool. Every component is z-scored across the same complete
-cohort, using the sample standard deviation (n − 1). Then:
+cohort, using the sample standard deviation (n − 1). Then, with n = 10 by default
+and n = 7 in the science view:
 
 ```text
 z_b = (score_b − cohort_mean_b) / cohort_sample_SD_b
-Z = Σ_(i=1…7) exp(−z_i)
-SoftMinZ = −ln(Z / 7)
+Z = Σ_(i=1…n) exp(−z_i)
+SoftMinZ = −ln(Z / n)
 ```
 
 Each component contributes one Boltzmann factor to the partition sum; dividing
-by seven takes their **mean** before the negative logarithm. This is **not a
+by the component count takes their **mean** before the negative logarithm. This is **not a
 linear weighted average of z-scores**. Its local influence is
 ∂SoftMinZ/∂z_i = exp(−z_i)/Z, so weak dimensions exert more influence.
 AA’s 10% accuracy / 5% non-hallucination weighting is not copied into performance.
@@ -44,17 +53,18 @@ are no longer used. The current v1.1 non-hallucination rate is explicitly includ
 (FrontierCode 1.x, AA-Omniscience v1, original HLE/CritPt) and full CritPt v2 cannot
 fill missing measurements for the named versions or hard subset. **The new scores and ranks are not directly comparable with the old battery
 or the initial six-component v5 version that used the combined Omniscience Index.** AnalystAgent remains
-watch-only, never silently added to the seven-component score.
+watch-only, never silently added to either battery.
 
 ## Head-to-head comparison
 
 Below the ranking tables, choose **Model A** and **Model B** to compare every
 scored model, including those without a published cost. The panel shows both
-models’ seven component z-scores and **Δz = A − B**: positive favors A, negative
-favors B. Swap models to reverse the comparison; selecting the same model gives
-zero deltas. Native labeled selectors support keyboard navigation.
+models’ seven science-component z-scores and **Δz = A − B**: positive favors A,
+negative favors B. Swap models to reverse the comparison; selecting the same model
+gives zero deltas. Native labeled selectors support keyboard navigation.
 
-The comparison uses the **same complete-cohort normalization as the rankings**.
+The comparison uses the **same complete-cohort normalization as the science
+ranking**.
 Selecting a pair never recomputes its z-scores. Deltas use full-precision z-scores
 before formatting to three decimals, not subtraction of rounded display values.
 Near-zero differences can display as zero; these are SD units, not significance
@@ -122,7 +132,8 @@ log-cost plot or Pareto frontier. The generated page reports actual priced cover
 - Weights/task counts must match the current v5 methodology schema, be positive,
   and have weights summing to one. No stale-weight fallback.
 - Preserve `docs/CNAME` (`softminz.org`). Publish one self-contained HTML page with
-  embedded chart and two ranking views, plus an identical PNG for social previews.
+  embedded charts and four ranking views (two benchmark sets × SoftMinZ/cost sorts),
+  plus identical PNGs for social previews.
 
 ## Run and test
 
@@ -137,7 +148,8 @@ node --test test_head_to_head.js
 
 `--fresh` bypasses every source cache. Without it, the scrape cache in `data/` has
 a maximum age of 12 hours. Outputs are `docs/index.html`,
-`docs/softminz_pareto.png` and `data/softminz_pareto.png`.
+`docs/softminz_pareto.png`, `docs/softminz_pareto_science.png` and their
+`data/` mirrors.
 
 ## Publishing
 
