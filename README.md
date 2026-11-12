@@ -57,13 +57,14 @@ watch-only, never silently added to either battery.
 
 ## Head-to-head comparison
 
-Below the ranking tables, choose **Model A** and **Model B** to compare every
-scored model, including those without a published cost. The panel shows both
-models’ seven science-component z-scores and **Δz = A − B**: positive favors A,
-negative favors B. Swap models to reverse the comparison; selecting the same model
-gives zero deltas. Native labeled selectors support keyboard navigation.
+Below the ranking tables in each view, choose **Model A** and **Model B** to compare every
+scored model, including those without a published cost. Each view's panel shows both
+models’ component z-scores for that view’s battery — ten in the all-benchmarks view,
+seven science-component z-scores in the science view — and **Δz = A − B**: positive favors A,
+negative favors B. Swap models to reverse the comparison; selecting the same model gives
+zero deltas. Native labeled selectors support keyboard navigation.
 
-The comparison uses the **same complete-cohort normalization as the science
+Each comparison uses the **same complete-cohort normalization as its view's
 ranking**.
 Selecting a pair never recomputes its z-scores. Deltas use full-precision z-scores
 before formatting to three decimals, not subtraction of rounded display values.

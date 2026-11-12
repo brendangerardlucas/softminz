@@ -75,3 +75,56 @@ test('null model in valid JSON preserves harmless disabled fallback',()=>{
   assert.equal(ui.mount(f.doc),null); assert.equal(f.elements['h2h-controls'].disabled,true);
 });
 test('no widget present is a harmless no-op',()=>assert.equal(ui.mount({getElementById:()=>null}),null));
+test('mounts every benchmark-set panel independently',()=>{
+  const sci={components:[{key:'tb',label:'Terminal-Bench'},{key:'nhr',label:'Non-hallucination'}],models:[
+    {slug:'a',name:'Astra',z:[1.138118894,.414214892],mean_z:.776,worst_z:.414,softminz:1.21,cost_task:5.0241839},
+    {slug:'b',name:'Opus',z:[1.403595288,.041725635],mean_z:.723,worst_z:.042,softminz:1.16,cost_task:null}]};
+  const all={components:[{key:'tb',label:'Terminal-Bench'},{key:'nhr',label:'NHR'},{key:'gdp',label:'GDP'}],models:[
+    {slug:'a',name:'Astra',z:[1.1,.4,.2],mean_z:.567,worst_z:.2,softminz:.9,cost_task:5.},
+    {slug:'b',name:'Opus',z:[1.4,.04,-.3],mean_z:.38,worst_z:-.3,softminz:.5,cost_task:null}]};
+  const ids=[];
+  for (const prefix of ['h2h','h2h-all']) {
+    ids.push(prefix+'-data',prefix+'-model-a',prefix+'-model-b',prefix+'-controls',prefix+'-swap',
+      prefix+'-rows',prefix+'-status',prefix+'-a-header',prefix+'-b-header',prefix+'-summary-a',prefix+'-summary-b');
+    for (const metric of ['mean','worst','score','cost']) for(const side of ['a','b']) ids.push(prefix+'-'+metric+'-'+side);
+  }
+  const elements=Object.fromEntries(ids.map(id=>[id,new Element()]));
+  elements['h2h-data'].textContent=JSON.stringify(sci);
+  elements['h2h-all-data'].textContent=JSON.stringify(all);
+  for (const prefix of ['h2h','h2h-all']) { elements[prefix+'-model-a'].value='a'; elements[prefix+'-model-b'].value='b'; }
+  const roots=[{getAttribute:()=> 'h2h'},{getAttribute:()=> 'h2h-all'}];
+  const doc={getElementById:id=>elements[id]||null,createElement:()=>new Element(),
+    querySelectorAll:sel=>sel==='[data-h2h]'?roots:[]};
+  const handles=ui.mount(doc);
+  assert.equal(handles.length,2);
+  assert.equal(elements['h2h-controls'].disabled,false);
+  assert.equal(elements['h2h-all-controls'].disabled,false);
+  assert.equal(elements['h2h-rows'].children.length,2);
+  assert.equal(elements['h2h-all-rows'].children.length,3);
+  elements['h2h-all-model-a'].events.change();
+  assert.equal(elements['h2h-all-rows'].children.length,3);
+  assert.equal(elements['h2h-rows'].children.length,2);
+  assert.equal(elements['h2h-a-header'].textContent,'Astra z');
+});
+test('one malformed panel does not block the other',()=>{
+  const good={components:[{key:'tb',label:'T'}],models:[
+    {slug:'a',name:'A',z:[1.],mean_z:1.,worst_z:1.,softminz:1.,cost_task:1.},
+    {slug:'b',name:'B',z:[2.],mean_z:2.,worst_z:2.,softminz:2.,cost_task:2.}]};
+  const ids=[];
+  for (const prefix of ['h2h','h2h-all']) {
+    ids.push(prefix+'-data',prefix+'-model-a',prefix+'-model-b',prefix+'-controls',prefix+'-swap',
+      prefix+'-rows',prefix+'-status',prefix+'-a-header',prefix+'-b-header',prefix+'-summary-a',prefix+'-summary-b');
+    for (const metric of ['mean','worst','score','cost']) for(const side of ['a','b']) ids.push(prefix+'-'+metric+'-'+side);
+  }
+  const elements=Object.fromEntries(ids.map(id=>[id,new Element()]));
+  elements['h2h-data'].textContent=JSON.stringify(good);
+  elements['h2h-all-data'].textContent='invalid';
+  for (const prefix of ['h2h','h2h-all']) { elements[prefix+'-model-a'].value='a'; elements[prefix+'-model-b'].value='b'; }
+  const roots=[{getAttribute:()=> 'h2h'},{getAttribute:()=> 'h2h-all'}];
+  const doc={getElementById:id=>elements[id]||null,createElement:()=>new Element(),
+    querySelectorAll:sel=>sel==='[data-h2h]'?roots:[]};
+  const handles=ui.mount(doc);
+  assert.equal(handles.length,1);
+  assert.equal(elements['h2h-controls'].disabled,false);
+  assert.equal(elements['h2h-all-controls'].disabled,true);
+});

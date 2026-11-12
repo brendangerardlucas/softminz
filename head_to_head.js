@@ -17,8 +17,9 @@
     }
     return a.z.map(function (value, i) { return {a: value, b: b.z[i], delta: value - b.z[i]}; });
   }
-  function mount(doc) {
-    var source = doc.getElementById('h2h-data');
+  function mountPanel(doc, prefix) {
+    function id(name) { return prefix + '-' + name; }
+    var source = doc.getElementById(id('data'));
     if (!source) return null;
     var data;
     try { data = JSON.parse(source.textContent); } catch (_) { return null; }
@@ -33,12 +34,12 @@
         })) return null;
     var models = new Map(data.models.map(function (m) { return [m.slug, m]; }));
     if (models.size !== data.models.length) return null;
-    var aSelect = doc.getElementById('h2h-model-a');
-    var bSelect = doc.getElementById('h2h-model-b');
-    var controls = doc.getElementById('h2h-controls');
-    var swapButton = doc.getElementById('h2h-swap');
-    var body = doc.getElementById('h2h-rows');
-    var status = doc.getElementById('h2h-status');
+    var aSelect = doc.getElementById(id('model-a'));
+    var bSelect = doc.getElementById(id('model-b'));
+    var controls = doc.getElementById(id('controls'));
+    var swapButton = doc.getElementById(id('swap'));
+    var body = doc.getElementById(id('rows'));
+    var status = doc.getElementById(id('status'));
     if (!aSelect || !bSelect || !controls || !swapButton || !body || !status) return null;
     function cell(tag, text, className) {
       var node = doc.createElement(tag);
@@ -46,7 +47,7 @@
       if (className) node.className = className;
       return node;
     }
-    function set(id, text) { doc.getElementById(id).textContent = text; }
+    function set(name, text) { doc.getElementById(id(name)).textContent = text; }
     function render() {
       var a = models.get(aSelect.value), b = models.get(bSelect.value);
       if (!a || !b) return;
@@ -63,14 +64,14 @@
         return row;
       });
       body.replaceChildren.apply(body, rows);
-      ['h2h-a-header', 'h2h-summary-a'].forEach(function (id) { set(id, a.name + (id === 'h2h-a-header' ? ' z' : '')); });
-      ['h2h-b-header', 'h2h-summary-b'].forEach(function (id) { set(id, b.name + (id === 'h2h-b-header' ? ' z' : '')); });
+      ['a-header', 'summary-a'].forEach(function (name) { set(name, a.name + (name === 'a-header' ? ' z' : '')); });
+      ['b-header', 'summary-b'].forEach(function (name) { set(name, b.name + (name === 'b-header' ? ' z' : '')); });
       [['a', a], ['b', b]].forEach(function (entry) {
         var side = entry[0], model = entry[1];
-        set('h2h-mean-' + side, formatZ(model.mean_z));
-        set('h2h-worst-' + side, formatZ(model.worst_z));
-        set('h2h-score-' + side, model.softminz.toFixed(2).replace('-', '−'));
-        set('h2h-cost-' + side, model.cost_task === null ? '—' : '$' + model.cost_task.toFixed(4));
+        set('mean-' + side, formatZ(model.mean_z));
+        set('worst-' + side, formatZ(model.worst_z));
+        set('score-' + side, model.softminz.toFixed(2).replace('-', '−'));
+        set('cost-' + side, model.cost_task === null ? '—' : '$' + model.cost_task.toFixed(4));
       });
       status.textContent = a.slug === b.slug ? 'Same model selected: all Δz values are zero.' :
         'Comparing ' + a.name + ' against ' + b.name + '.';
@@ -87,6 +88,25 @@
     render();
     controls.disabled = false;
     return {render: render, swap: swap};
+  }
+  function mount(doc) {
+    var prefixes = null;
+    if (doc.querySelectorAll) {
+      try {
+        prefixes = Array.prototype.map.call(doc.querySelectorAll('[data-h2h]'), function (el) {
+          return el.getAttribute('data-h2h');
+        }).filter(function (prefix, index, all) {
+          return typeof prefix === 'string' && prefix && all.indexOf(prefix) === index;
+        });
+      } catch (_) { prefixes = null; }
+    }
+    if (!prefixes) prefixes = ['h2h'];
+    var handles = [];
+    prefixes.forEach(function (prefix) {
+      var handle = mountPanel(doc, String(prefix));
+      if (handle) handles.push(handle);
+    });
+    return handles.length ? handles : null;
   }
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = {formatZ: formatZ, formatDelta: formatDelta, deltaClass: deltaClass, compare: compare, mount: mount};

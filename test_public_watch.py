@@ -377,12 +377,15 @@ class HeadToHeadTests(unittest.TestCase):
         self.assertEqual(len(data['models']),len(ranked))
         self.assertIsNone(data['models'][0]['cost_task'])
 
-    def test_panel_is_between_rankings_and_methodology(self):
+    def test_panels_sit_inside_their_benchmark_set_view(self):
         models=complete_models(battery=w.BATTERY_ALL)
         ranked,rows,stats=w.zscore_battery(models)
         ranked_all,_,stats_all=w.zscore_battery(models,w.BATTERY_ALL)
         page=w.build_html(ranked,[],stats,ranked_all,[],stats_all,{},models,'dGVzdA==',
                           'dGVzdA==',WEIGHTS,'test')
+        self.assertLess(page.index('id="all9-cost-table"'),page.index('id="head-to-head-all"'))
+        self.assertLess(page.index('id="head-to-head-all"'),page.index('id="view-sci"'))
+        self.assertLess(page.index('id="view-sci"'),page.index('id="rank-cost-table"'))
         self.assertLess(page.index('id="rank-cost-table"'),page.index('id="head-to-head"'))
         self.assertLess(page.index('id="head-to-head"'),page.index('<h2>What SoftMinZ measures'))
 
@@ -449,6 +452,34 @@ class AllBenchmarksTests(unittest.TestCase):
     def test_html_embeds_both_charts(self):
         page = self.dual_page()
         self.assertEqual(page.count('data:image/png;base64,dGVzdA=='), 2)
+
+    def test_each_view_has_its_own_head_to_head_panel(self):
+        import re
+        page = self.dual_page()
+        for vid in ('id="head-to-head-all"', 'id="head-to-head"',
+                    'data-h2h="h2h-all"', 'data-h2h="h2h"',
+                    'id="h2h-all-data"', 'id="h2h-data"',
+                    'id="h2h-all-controls"', 'id="h2h-controls"'):
+            self.assertIn(vid, page)
+        self.assertLess(page.index('id="head-to-head-all"'), page.index('id="view-sci"'))
+        self.assertLess(page.index('id="view-sci"'), page.index('id="head-to-head"'))
+        self.assertIn('10 all-benchmarks components', page)
+        self.assertIn('7 science components', page)
+        all_payload = re.search(r'<script type="application/json" id="h2h-all-data">(.*?)</script>',
+                                page, re.S).group(1)
+        sci_payload = re.search(r'<script type="application/json" id="h2h-data">(.*?)</script>',
+                                page, re.S).group(1)
+        self.assertEqual(len(json.loads(all_payload)['components']), 10)
+        self.assertEqual(len(json.loads(sci_payload)['components']), 7)
+        self.assertEqual(page.count('<script>'), 1)
+
+    def test_comparison_data_uses_given_battery(self):
+        models = complete_models(battery=w.BATTERY_ALL)
+        ranked_all, _, _ = w.zscore_battery(models, w.BATTERY_ALL)
+        data = w.comparison_data(ranked_all, w.BATTERY_ALL)
+        self.assertEqual([c['key'] for c in data['components']], w.BATTERY_ALL)
+        for model in data['models']:
+            self.assertEqual(len(model['z']), 10)
 
 
 class PublicationGateTests(unittest.TestCase):

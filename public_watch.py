@@ -805,9 +805,9 @@ def fmt_cost(v):
 
 
 CSS += """
-#head-to-head { scroll-margin-top:20px; }
-#h2h-controls { border:0; padding:0; margin:0 0 12px; min-width:0; }
-#h2h-controls legend { font-weight:600; margin-bottom:8px; }
+#head-to-head, #head-to-head-all { scroll-margin-top:20px; }
+#h2h-controls, #h2h-all-controls { border:0; padding:0; margin:0 0 12px; min-width:0; }
+#h2h-controls legend, #h2h-all-controls legend { font-weight:600; margin-bottom:8px; }
 .h2h-controls { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto; gap:12px; align-items:end; }
 .h2h-controls label { display:block; min-width:0; font-size:14px; font-weight:600; }
 .h2h-controls select { display:block; width:100%; max-width:100%; min-width:0; margin-top:5px; padding:10px 8px; min-height:44px; font:inherit; background:white; color:var(--ink); border:1px solid var(--line); border-radius:6px; }
@@ -824,11 +824,11 @@ CSS += """
 """
 
 
-def comparison_data(ranked):
+def comparison_data(ranked, battery=BATTERY):
     """Export full-precision ranking-cohort z-scores, never pair-normalize."""
     models = []
     for row in ranked:
-        zs = [float(row['zscores'][b]) for b in BATTERY]
+        zs = [float(row['zscores'][b]) for b in battery]
         models.append({'slug': str(row['slug']), 'name': str(row['name']), 'z': zs,
                        'mean_z': statistics.mean(zs), 'worst_z': min(zs),
                        'softminz': row['softminz'], 'cost_task': row.get('cost_task')})
@@ -837,7 +837,7 @@ def comparison_data(ranked):
     default_b = 'claude-opus-5-5' if 'claude-opus-5-5' in slugs and default_a != 'claude-opus-5-5' else next(
         (m['slug'] for m in models if m['slug'] != default_a), default_a)
     return {'cohort_size': len(models), 'generated': TODAY,
-            'components': [{'key': b, 'label': BENCH_LABEL[b]} for b in BATTERY],
+            'components': [{'key': b, 'label': BENCH_LABEL[b]} for b in battery],
             'models': models, 'default_a': default_a, 'default_b': default_b}
 
 
@@ -847,8 +847,11 @@ def _comparison_number(value, signed=False, places=3):
     return ('+' if signed and value > 0 else '') + text
 
 
-def render_head_to_head(ranked):
-    data = comparison_data(ranked)
+def render_head_to_head(ranked, prefix='h2h', battery=BATTERY,
+                          set_label='science', section_id='head-to-head',
+                          with_script=True):
+    data = comparison_data(ranked, battery)
+    p = prefix
     if not data['models']:
         return ''
     by_slug = {m['slug']: m for m in data['models']}
@@ -862,7 +865,8 @@ def render_head_to_head(ranked):
     for component, az, bz in zip(data['components'], a['z'], b['z']):
         delta = az - bz
         cls = 'h2h-tie' if abs(delta) < .0005 else 'h2h-positive' if delta > 0 else 'h2h-negative'
-        winner = 'tie at displayed precision' if cls == 'h2h-tie' else 'favors ' + (a['name'] if delta > 0 else b['name'])
+        winner = 'tie at displayed precision' if cls == 'h2h-tie' else \
+            'favors ' + (a['name'] if delta > 0 else b['name'])
         display = _comparison_number(delta, signed=True)
         rows.append(f'<tr data-component="{esc(component["key"])}"><th scope="row">{esc(component["label"])}</th>'
                     f'<td class="num">{_comparison_number(az)}</td><td class="num">{_comparison_number(bz)}</td>'
@@ -873,39 +877,41 @@ def render_head_to_head(ranked):
         cells = []
         for side, model in [('a',a),('b',b)]:
             value = fmt_cost(model[key]) if key == 'cost_task' else _comparison_number(model[key], places=places)
-            cells.append(f'<td class="num" id="h2h-{tag}-{side}">{value}</td>')
+            cells.append(f'<td class="num" id="{p}-{tag}-{side}">{value}</td>')
         summary.append(f'<tr><th scope="row">{label}</th>' + ''.join(cells) + '</tr>')
     # Escape raw-text script delimiters, then use only textContent in the client.
     payload = json.dumps(data, ensure_ascii=True, allow_nan=False, separators=(',', ':'))
     payload = payload.replace('<', r'\u003c').replace('>', r'\u003e').replace('&', r'\u0026')
     script = (HERE / 'head_to_head.js').read_text()
-    return f'''<section id="head-to-head" aria-labelledby="h2h-title">
-<h2 id="h2h-title">Head-to-head comparison</h2>
+    section = f'''<section id="{section_id}" data-h2h="{p}" aria-labelledby="{p}-title">
+<h2 id="{p}-title">Head-to-head comparison</h2>
 <p class="note">Choose any two scored models, including models without cost data.
-All z-scores are science-battery components over the same {data['cohort_size']}-model complete cohort as the science ranking;
+All z-scores use the {len(battery)} {set_label} components over the same {data['cohort_size']}-model complete cohort as the {set_label} ranking;
 selecting a pair does not recalculate the normalization.</p>
-<fieldset id="h2h-controls" disabled><legend>Choose models</legend>
+<fieldset id="{p}-controls" disabled><legend>Choose models</legend>
 <div class="h2h-controls">
-<label for="h2h-model-a">Model A<select id="h2h-model-a" name="model-a">{options(a['slug'])}</select></label>
-<label for="h2h-model-b">Model B<select id="h2h-model-b" name="model-b">{options(b['slug'])}</select></label>
-<button type="button" id="h2h-swap">Swap models</button>
+<label for="{p}-model-a">Model A<select id="{p}-model-a" name="model-a">{options(a['slug'])}</select></label>
+<label for="{p}-model-b">Model B<select id="{p}-model-b" name="model-b">{options(b['slug'])}</select></label>
+<button type="button" id="{p}-swap">Swap models</button>
 </div></fieldset>
 <p><strong>Δz = Model A − Model B.</strong> Positive favors A; negative favors B.
 Differences use unrounded z-scores, displayed to three decimals. These are standard-deviation units, not significance tests.</p>
-<p id="h2h-status" class="note" role="status" aria-live="polite" aria-atomic="true">Comparing {esc(a['name'])} against {esc(b['name'])}.</p>
+<p id="{p}-status" class="note" role="status" aria-live="polite" aria-atomic="true">Comparing {esc(a['name'])} against {esc(b['name'])}.</p>
 <div class="h2h-wrap" role="region" aria-label="Head-to-head component table" tabindex="0">
 <table><caption>Standardized component scores</caption><thead><tr><th scope="col">Component</th>
-<th scope="col" class="num" id="h2h-a-header">{esc(a['name'])} z</th>
-<th scope="col" class="num" id="h2h-b-header">{esc(b['name'])} z</th><th scope="col" class="num">Δz (A − B)</th></tr></thead>
-<tbody id="h2h-rows">{''.join(rows)}</tbody></table></div>
-<div class="h2h-wrap" role="region" aria-label="Head-to-head overall summary" tabindex="0">
+<th scope="col" class="num" id="{p}-a-header">{esc(a['name'])} z</th>
+<th scope="col" class="num" id="{p}-b-header">{esc(b['name'])} z</th><th scope="col" class="num">Δz (A − B)</th></tr></thead>
+<tbody id="{p}-rows">{''.join(rows)}</tbody></table></div>
+<div class="h2h-wrap" role="region" aria-label="Head-to-head overall comparison" tabindex="0">
 <table><caption>Overall comparison</caption><thead><tr><th scope="col">Metric</th>
-<th scope="col" class="num" id="h2h-summary-a">{esc(a['name'])}</th>
-<th scope="col" class="num" id="h2h-summary-b">{esc(b['name'])}</th></tr></thead><tbody>{''.join(summary)}</tbody></table></div>
+<th scope="col" class="num" id="{p}-summary-a">{esc(a['name'])}</th>
+<th scope="col" class="num" id="{p}-summary-b">{esc(b['name'])}</th></tr></thead><tbody>{''.join(summary)}</tbody></table></div>
 <noscript><p class="note">Interactive model selection requires JavaScript. The default comparison above remains readable without it; the ranking controls still work.</p></noscript>
-<script type="application/json" id="h2h-data">{payload}</script>
-<script>{script}</script>
+<script type="application/json" id="{p}-data">{payload}</script>
 </section>'''
+    if with_script:
+        section += f'\n<script>{script}</script>'
+    return section
 
 
 def build_html(ranked_sci, front_sci, zstats_sci, ranked_all, front_all,
@@ -956,6 +962,11 @@ def build_html(ranked_sci, front_sci, zstats_sci, ranked_all, front_all,
 
     tbl_head = ('<thead><tr><th>Model / variant</th><th class="num">SoftMinZ</th>'
                 '<th class="num">Cost per task</th></tr></thead>')
+
+    h2h_all = render_head_to_head(ranked_all, prefix='h2h-all', battery=BATTERY_ALL,
+                                  set_label='all-benchmarks',
+                                  section_id='head-to-head-all', with_script=False)
+    h2h_sci = render_head_to_head(ranked_sci)
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -1027,6 +1038,7 @@ least as good. Frontier members are colour- and shape-coded; everything else is 
 </tbody>
 </table>
 </div>
+{h2h_all}
 </div>
 <div id="view-sci">
 <img class="plot" alt="Seven-component science SoftMinZ vs cost per agentic task scatter with Pareto frontier"
@@ -1060,10 +1072,9 @@ at least as good. Frontier members are colour- and shape-coded; everything else 
 </tbody>
 </table>
 </div>
+{h2h_sci}
 </div>
 </div>
-
-{render_head_to_head(ranked_sci)}
 
 <h2>What SoftMinZ measures</h2>
 <p>SoftMinZ standardizes each component across one complete cohort and takes a
