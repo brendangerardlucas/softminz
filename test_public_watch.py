@@ -128,6 +128,10 @@ class MethodologyAndCostTests(unittest.TestCase):
         modified = methodology_html().replace('<td>40</td>', '<td>40 (hard subset of 70)</td>')
         self.assertEqual(w.parse_ii_methodology_weights(modified)['critpt-v2-hard']['tasks'], 40)
 
+    def test_frontiercode_aa_label_alias(self):
+        renamed = methodology_html().replace('FrontierCode 2.0', 'FrontierCode-AA 2.0')
+        self.assertEqual(w.parse_ii_methodology_weights(renamed), WEIGHTS)
+
     def test_missing_weights_or_tasks_abort(self):
         cases = [methodology_html({k:v for k,v in WEIGHTS.items() if k != 'frontiercode-2-0'}),
                  methodology_html().replace('<td>132</td>', '<td>0</td>'),

@@ -206,6 +206,7 @@ II_TABLE_NAMES = {
     'AutomationBench-AA': 'automationbench-aa',
     'GDP.pdf': 'gdp-pdf',
     'FrontierCode 2.0': 'frontiercode-2-0',
+    'FrontierCode-AA 2.0': 'frontiercode-2-0',
     'Terminal-Bench 4.0': 'terminalbench-4-0',
     'Terminal-Bench-Science 0.1': 'terminal-bench-science',
     'CritPt v2 (Hard Subset)': 'critpt-v2-hard',
