@@ -110,7 +110,7 @@ class ScoreCompatibilityTests(unittest.TestCase):
     def test_scrape_nested_primary_with_flat_evaluation_pages(self):
         common = dict(slug='test-model', name='Test', shortName='Test', deprecated=False,
                       isReasoning=True, isOpenWeights=False, contextWindowTokens=1000000,
-                      intelligenceIndex=51., omniscience=29.5)
+                      intelligenceIndex=51., omniscience=100*(.4763333333333333 - (1-.4763333333333333)*(1-.6549968173138129)))
         primary = dict(common, scores=NESTED)
         evaluation = dict(common, **{k:v for k,v in LEGACY.items()
                           if k not in ('omniscienceAccuracy','omniscienceNonHallucination')},
@@ -129,7 +129,7 @@ class ScoreCompatibilityTests(unittest.TestCase):
         for key in w.BATTERY_ALL:
             self.assertIsNotNone(models['test-model'].get(key), key)
         self.assertEqual(models['test-model']['analystAgent'], .42)
-        self.assertEqual(sum('validated (' in str(v) for v in report.values()), 11)
+        self.assertEqual(sum('validated (' in str(v) for v in report.values()), 13)
 
 
 class MethodologyAndCostTests(unittest.TestCase):
@@ -390,6 +390,79 @@ class HeadToHeadTests(unittest.TestCase):
         self.assertLess(page.index('id="head-to-head"'),page.index('<h2>What SoftMinZ measures'))
 
 
+class OmniscienceModeTests(unittest.TestCase):
+    def test_net_consistency_rejects_contradictions_and_skips_incomplete(self):
+        good = {'omniscience': 25.0, 'scores': {'omniscience-accuracy': .5,
+                'omniscience-non-hallucination': .5}}
+        bad = dict(good, omniscience=26.0)
+        self.assertEqual(w.validate_omniscience_consistency({'good': good, 'partial': {'omniscience': 10}}), 1)
+        with self.assertRaisesRegex(ValueError, 'bad'):
+            w.validate_omniscience_consistency({'bad': bad})
+
+    def test_four_view_html_has_independent_payloads_and_unique_ids(self):
+        import re
+        models = complete_models(battery=w.BATTERY_ALL)
+        for i, model in enumerate(models.values()):
+            model['omniscience_v11_combined'] = float(i*i)
+        variants = {}
+        for key, battery in [('all-combined', w.BATTERY_ALL_COMBINED), ('sci-combined', w.BATTERY_COMBINED)]:
+            ranked, _, stats = w.zscore_battery(models, battery)
+            variants[key] = (ranked, w.pareto(ranked, 'cost_task', 'softminz'), stats, 'dGVzdA==')
+        sci, _, ss = w.zscore_battery(models, w.BATTERY)
+        all_, _, sa = w.zscore_battery(models, w.BATTERY_ALL)
+        page = w.build_html(sci, [], ss, all_, [], sa, {}, models, 'dGVzdA==', 'dGVzdA==', WEIGHTS, 'test', variants=variants)
+        ids = re.findall(r'\bid="([^"]+)"', page)
+        self.assertEqual(len(ids), len(set(ids)))
+        for prefix, battery in [('h2h-all-combined', w.BATTERY_ALL_COMBINED), ('h2h-sci-combined', w.BATTERY_COMBINED)]:
+            payload = json.loads(re.search(r'<script type="application/json" id="'+prefix+r'-data">(.*?)</script>', page, re.S).group(1))
+            self.assertEqual([c['key'] for c in payload['components']], battery)
+            self.assertEqual(len(payload['models']), 6)
+        self.assertIn('data-mode="combined"', page)
+        self.assertEqual(page.count('data:image/png;base64,dGVzdA=='), 4)
+
+    def test_combined_jsonld_does_not_read_accuracy_as_net_score(self):
+        raw = '<script type="application/ld+json">' + json.dumps({
+            'name': 'AA-Omniscience v1.1 Accuracy: Score',
+            'data': [{'detailsUrl': '/models/example', 'value': .5}]}) + '</script>'
+        label = next(label for field, label in w.PAGES['omniscience'] if field == 'omniscience_v11_combined')
+        self.assertEqual(w.jsonld_scores(raw, label), {})
+
+    def test_combined_score_is_published_v11_net_and_range_checked(self):
+        self.assertEqual(w._score_value({'omniscience': 42.5, 'omniscienceV1': 99}, 'omniscience'), 42.5)
+        for bad in (-100.1, 100.1, float('nan'), True):
+            self.assertIsNone(w._score_value({'omniscience': bad}, 'omniscience'))
+        self.assertIsNone(w._score_value({'omniscienceV1': 88}, 'omniscience'))
+        self.assertIsNone(w._score_value({'scores': {'omniscience': 88}}, 'omniscience'))
+        self.assertEqual(w._score_value({'omniscience': -100}, 'omniscience'), -100)
+        self.assertEqual(w._score_value({'omniscience': 100}, 'omniscience'), 100)
+
+    def test_combined_batteries_replace_two_rates_with_one_metric(self):
+        for split, combined in ((w.BATTERY, w.BATTERY_COMBINED),
+                                (w.BATTERY_ALL, w.BATTERY_ALL_COMBINED)):
+            self.assertEqual(len(combined), len(split) - 1)
+            self.assertIn('omniscience_v11_combined', combined)
+            self.assertNotIn('omniscience_v11_accuracy', combined)
+            self.assertNotIn('omniscience_v11_non_hallucination', combined)
+            self.assertEqual(set(combined) - {'omniscience_v11_combined'},
+                             set(split) - {'omniscience_v11_accuracy', 'omniscience_v11_non_hallucination'})
+
+    def test_modes_normalize_independent_complete_cohorts(self):
+        models = complete_models(battery=w.BATTERY_ALL)
+        for i, model in enumerate(models.values()):
+            model['omniscience_v11_combined'] = float(i * i)
+        models['combined_only'] = dict(models['m0'])
+        del models['combined_only']['omniscience_v11_accuracy']
+        split, _, split_stats = w.zscore_battery(models, w.BATTERY_ALL)
+        combined, _, combined_stats = w.zscore_battery(models, w.BATTERY_ALL_COMBINED)
+        self.assertEqual(len(split), 6)
+        self.assertEqual(len(combined), 7)
+        self.assertEqual(set(split_stats), set(w.BATTERY_ALL))
+        self.assertEqual(set(combined_stats), set(w.BATTERY_ALL_COMBINED))
+        for row in combined:
+            zs = [row['zscores'][key] for key in w.BATTERY_ALL_COMBINED]
+            self.assertEqual(row['softminz'], round(-math.log(sum(math.exp(-z) for z in zs)/len(zs)), 2))
+
+
 class AllBenchmarksTests(unittest.TestCase):
     def test_all_battery_is_ten_components_with_split_omniscience(self):
         self.assertEqual(w.BATTERY_ALL, w.BATTERY + ['briefcaseElo',
@@ -483,6 +556,28 @@ class AllBenchmarksTests(unittest.TestCase):
 
 
 class PublicationGateTests(unittest.TestCase):
+    def test_render_failure_preserves_existing_artifacts(self):
+        models = complete_models(battery=w.BATTERY_ALL)
+        for i, model in enumerate(models.values()):
+            model['omniscience_v11_combined'] = i * i
+        with tempfile.TemporaryDirectory() as tmp:
+            data, docs = Path(tmp)/'data', Path(tmp)/'docs'
+            data.mkdir(); docs.mkdir()
+            names = ['index.html', 'softminz_pareto.png', 'softminz_pareto_science.png',
+                     'softminz_pareto_all-combined.png', 'softminz_pareto_sci-combined.png']
+            for name in names: (docs/name).write_bytes(b'previous')
+            def fake_chart(ranked, front, path): path.write_bytes(b'new chart')
+            with patch.object(w, 'DATA', data), patch.object(w, 'DOCS', docs), \
+                 patch.object(w, 'load_ii_benchmarks', return_value=(WEIGHTS, 'test')), \
+                 patch.object(w, 'scrape', return_value=(models, {})), \
+                 patch.object(w, 'make_chart', side_effect=fake_chart), \
+                 patch.object(w, 'build_html', side_effect=RuntimeError('render failed')):
+                with self.assertRaisesRegex(RuntimeError, 'render failed'): w.main()
+            for name in names: self.assertEqual((docs/name).read_bytes(), b'previous', name)
+
+    def test_combined_cohort_is_required_before_artifacts(self):
+        self.check_aborts_before_artifacts({}, complete_models(battery=w.BATTERY_ALL))
+
     def check_aborts_before_artifacts(self, report, models):
         with tempfile.TemporaryDirectory() as tmp:
             data, docs = Path(tmp)/'data', Path(tmp)/'docs'

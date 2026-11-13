@@ -75,6 +75,7 @@ BENCH_LABEL = {
     'frontiercode_v20': 'FrontierCode 2.0',
     'omniscience_v11_accuracy': 'AA-Omniscience v1.1 — Accuracy',
     'omniscience_v11_non_hallucination': 'AA-Omniscience v1.1 — Non-hallucination',
+    'omniscience_v11_combined': 'AA-Omniscience v1.1 — Net Score (combined)',
     'hle_diamond': 'HLE-Diamond',
     'critpt_v2_hard': 'CritPt v2 (Hard Subset)',
     'terminalbench_science': 'Terminal-Bench-Science 0.1',
@@ -87,6 +88,7 @@ BENCH_URL = {
     'frontiercode_v20': BASE + 'frontiercode-2-0',
     'omniscience_v11_accuracy': BASE + 'omniscience',
     'omniscience_v11_non_hallucination': BASE + 'omniscience',
+    'omniscience_v11_combined': BASE + 'omniscience',
     'hle_diamond': BASE + 'hle-diamond',
     'critpt_v2_hard': BASE + 'critpt',
     'terminalbench_science': BASE + 'terminal-bench-science',
@@ -99,6 +101,7 @@ FIELD_MAP = {
     'frontiercode_v20': 'frontierCode20',
     'omniscience_v11_accuracy': 'omniscienceAccuracy',
     'omniscience_v11_non_hallucination': 'omniscienceNonHallucination',
+    'omniscience_v11_combined': 'omniscience',
     'hle_diamond': 'hleDiamond',
     'critpt_v2_hard': 'critptAgenticHard',
     'terminalbench_science': 'terminalBenchScience',
@@ -200,6 +203,7 @@ PAGES = {
     'omniscience': [
         ('omniscience_v11_accuracy', 'AA-Omniscience v1.1 Accuracy'),
         ('omniscience_v11_non_hallucination', 'AA-Omniscience v1.1 Non-Hallucination Rate'),
+        ('omniscience_v11_combined', 'AA-Omniscience v1.1: Net'),
     ],
     'hle-diamond': ('hle_diamond', 'HLE-Diamond'),
     'critpt': ('critpt_v2_hard', 'CritPt v2 (Hard Subset)'),
@@ -354,6 +358,13 @@ SCORE_SLUGS = {
 BATTERY_ALL = BATTERY + ['briefcaseElo', 'automationBenchPartialScore',
                          'gdpPdfAllPass']
 
+def _combined_battery(battery):
+    return [component for component in battery if component not in
+            ('omniscience_v11_accuracy', 'omniscience_v11_non_hallucination')] + ['omniscience_v11_combined']
+
+BATTERY_COMBINED = _combined_battery(BATTERY)
+BATTERY_ALL_COMBINED = _combined_battery(BATTERY_ALL)
+
 
 def is_number(value):
     return type(value) in (int, float) and math.isfinite(value)
@@ -362,7 +373,7 @@ def is_number(value):
 def _score_value(record, key):
     """Read the exact named evaluation; reject booleans/non-finite values."""
     value = record.get(key)
-    if not is_number(value):
+    if not is_number(value) and key != 'omniscience':
         scores = record.get('scores')
         value = scores.get(SCORE_SLUGS.get(key, key)) if isinstance(scores, dict) else None
     # Evaluation pages publish current v1.1 accuracy and hallucination rate
@@ -376,9 +387,26 @@ def _score_value(record, key):
             else:
                 rate = breakdown.get('hallucinationRate')
                 value = 1. - rate if is_number(rate) and 0. <= rate <= 1. else None
-    if not is_number(value) or (key in components and not 0. <= value <= 1.):
+    if (not is_number(value) or (key in components and not 0. <= value <= 1.)
+            or (key == 'omniscience' and not -100. <= value <= 100.)):
         return None
     return value
+
+
+def validate_omniscience_consistency(records):
+    """Cross-check published v1.1 net against accuracy and non-hallucination when present."""
+    checked = 0
+    for slug, record in records.items():
+        net = _score_value(record, 'omniscience')
+        accuracy = _score_value(record, 'omniscienceAccuracy')
+        nonhallucination = _score_value(record, 'omniscienceNonHallucination')
+        if any(value is None for value in (net, accuracy, nonhallucination)):
+            continue
+        expected = 100. * (accuracy - (1. - accuracy) * (1. - nonhallucination))
+        if not math.isclose(net, expected, abs_tol=1e-6, rel_tol=0.):
+            raise ValueError(f'AA-Omniscience v1.1 net contradicts components for {slug}')
+        checked += 1
+    return checked
 
 
 def extract_cost_split(record):
@@ -439,6 +467,10 @@ def scrape(max_age_h=12, ii_weights=None):
     if not records:
         report['leaderboards/models'] = 'FAILED: 0 records extracted'
         return dict(models), report
+    net_checked = validate_omniscience_consistency(records)
+    if not net_checked:
+        raise ValueError('AA-Omniscience v1.1 net consistency check unavailable')
+    report['omniscience/net-formula'] = f'validated ({net_checked} leaderboard triples)'
 
     counts = collections.Counter()
     for s, rec in records.items():
@@ -724,6 +756,7 @@ def make_chart(ranked, front, out_path):
 CSS = """
 :root { --ink:#1c2733; --mut:#5c6b7a; --line:#dde4ea; --accent:#0f2a43; --pareto:#0f6b3a; }
 * { box-sizing:border-box; }
+[hidden] { display:none !important; }
 body { margin:0; color:var(--ink); background:#fbfcfd;
        font:16px/1.65 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; }
 .wrap { max-width:1080px; margin:0 auto; padding:40px 22px 70px; }
@@ -916,7 +949,8 @@ Differences use unrounded z-scores, displayed to three decimals. These are stand
 
 def build_html(ranked_sci, front_sci, zstats_sci, ranked_all, front_all,
                zstats_all, report, models, img_b64_sci, img_b64_all,
-               ii_weights, ii_source):
+               ii_weights, ii_source, variants=None):
+    variants = variants or {}
     frontier_sci = {r['slug'] for r in front_sci}
     frontier_all = {r['slug'] for r in front_all}
     n_scored = len(ranked_all)
@@ -966,7 +1000,31 @@ def build_html(ranked_sci, front_sci, zstats_sci, ranked_all, front_all,
     h2h_all = render_head_to_head(ranked_all, prefix='h2h-all', battery=BATTERY_ALL,
                                   set_label='all-benchmarks',
                                   section_id='head-to-head-all', with_script=False)
-    h2h_sci = render_head_to_head(ranked_sci)
+    h2h_sci = render_head_to_head(ranked_sci, with_script=False)
+    combined_views = []
+    for key, battery in [('all-combined', BATTERY_ALL_COMBINED), ('sci-combined', BATTERY_COMBINED)]:
+        if key not in variants:
+            continue
+        ranked, front, stats, image = variants[key]
+        front_slugs = {r['slug'] for r in front}
+        ordered_cost = sorted(ranked, key=lambda r: (r.get('cost_task') is None,
+                              r.get('cost_task') or 0, -r['softminz'], r['slug']))
+        h2h = render_head_to_head(ranked, prefix='h2h-' + key, battery=battery,
+                                 set_label=key.replace('-', ' '),
+                                 section_id='head-to-head-' + key, with_script=False)
+        stat_rows = ''.join(f'<tr><td>{esc(BENCH_LABEL[b])}</td><td class="num">{stats[b][0]:.6f}</td><td class="num">{stats[b][1]:.6f}</td></tr>' for b in battery)
+        combined_views.append(f'''<div id="view-{key}" class="combined-view" style="display:none">
+<img class="plot" alt="{len(battery)}-component {key} SoftMinZ vs cost, Pareto frontier" src="data:image/png;base64,{image}">
+<p class="note">{len(ranked)} complete models; {len(battery)} components. Bold rows are Pareto frontier members; unpriced models sort last.</p>
+<div class="sortctl"><label>Rank by</label><span class="seg"><a href="#" data-sort="smz">Highest SoftMinZ</a><a href="#" data-sort="cost">Lowest cost per task</a></span></div>
+<div class="tblwrap" id="{key}-smz-table"><table>{tbl_head}<tbody>{table_rows(ranked, front_slugs)}</tbody></table></div>
+<div class="tblwrap" id="{key}-cost-table" style="display:none"><table>{tbl_head}<tbody>{table_rows(ordered_cost, front_slugs)}</tbody></table></div>
+{h2h}
+<h3>Cohort statistics: {key.replace('-', ' ')}</h3><table><thead><tr><th>Score component</th><th>Cohort mean</th><th>Sample SD</th></tr></thead><tbody>{stat_rows}</tbody></table>
+</div>''')
+    combined_html = '\n'.join(combined_views)
+    scripts = (HERE / 'head_to_head.js').read_text()
+    controls_script = (HERE / 'view_controls.js').read_text() if variants else ''
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -986,14 +1044,15 @@ def build_html(ranked_sci, front_sci, zstats_sci, ranked_all, front_all,
 <body>
 <div class="wrap">
 <h1>LLM Index for Scientific Computing</h1>
-<p class="sub">Generated {TODAY} · {n_scored} models scored from {n_measured} measured by
+<p class="sub">Generated {TODAY} · {n_scored} models scored in the default view from {n_measured} measured by
 <a href="https://artificialanalysis.ai">Artificial Analysis</a> · raw cost data only</p>
 
 <h2>Full ranking</h2>
-<p class="note">Two benchmark sets. The default view ranks every scored model on the
-full nine-benchmark suite (ten components); the science-subset view uses seven
-components from six benchmarks. Use the buttons to switch sets — they need no
-JavaScript. Within each set, switch between the SoftMinZ and cost sorts. Bold rows
+<p class="note">Two benchmark sets and two Omniscience modes. The default uses
+all nine benchmarks with separate accuracy and non-hallucination components (ten total).
+The science subset has seven; combined Net Score replaces the two rates with one,
+giving nine and six components respectively. Each view uses its own complete cohort.
+JavaScript lets the benchmark, Omniscience and sort controls work independently. Bold rows
 are that view's Pareto frontier members. In cost view, models with no published
 cost data sort last.</p>
 <div id="ranking">
@@ -1006,6 +1065,11 @@ cost data sort last.</p>
   <span id="setnote-all">Ten-component SoftMinZ over the full v5 suite.</span>
   <span id="setnote-sci">Seven-component SoftMinZ over the science battery.</span>
 </div>
+<div class="sortctl" id="mode-controls" hidden>
+  <label>Omniscience metric</label><span class="seg">
+  <a href="#" data-mode="split" class="on" aria-pressed="true">Separate rates</a><a href="#" data-mode="combined" aria-pressed="false">Combined Net Score</a></span>
+</div>
+<noscript><p class="note">Without JavaScript, only split Omniscience is available. Benchmark and sort links use a single URL hash, so changing one may reset the other; interactive comparison also requires JavaScript.</p></noscript>
 <div id="view-all">
 <img class="plot" alt="Ten-component SoftMinZ vs cost per agentic task scatter with Pareto frontier"
      src="data:image/png;base64,{img_b64_all}">
@@ -1074,17 +1138,20 @@ at least as good. Frontier members are colour- and shape-coded; everything else 
 </div>
 {h2h_sci}
 </div>
+{combined_html}
+<script>{scripts}\n{controls_script}</script>
 </div>
 
 <h2>What SoftMinZ measures</h2>
 <p>SoftMinZ standardizes each component across one complete cohort and takes a
 nonlinear soft-minimum in the
 <a href="{II_METHOD_URL}">Artificial Analysis Intelligence Index v5.0</a>.
-Two batteries are published side by side: the default <strong>all-benchmarks
-battery of ten components from nine benchmarks</strong>, and the
-<strong>science subset of seven components from six benchmarks</strong>.</p>
+Two benchmark sets are each available in two Omniscience modes. The default
+<strong>all-benchmarks, separate-rates</strong> view has ten components from nine benchmarks;
+the <strong>science subset, separate-rates</strong> view has seven components from six.
+Combined Net Score replaces the two rates with one component in either set.</p>
 
-<h3>Default: all nine benchmarks (ten components)</h3>
+<h3>Default: all nine benchmarks, separate rates (ten components)</h3>
 <ul>{battery_items_all}</ul>
 <p>AA-Briefcase v1.1 contributes its Elo-style rating; AutomationBench-AA its partial
 score; GDP.pdf its all-pass rate. AA-Omniscience v1.1 contributes two distinct inputs:
@@ -1102,7 +1169,7 @@ SoftMinZ = −ln(Z / 10)</div>
 <table><thead><tr><th>Score component</th><th class="num">Cohort mean</th>
 <th class="num">Sample SD</th></tr></thead><tbody>{stats_rows_all}</tbody></table>
 
-<h3>Science subset (seven components)</h3>
+<h3>Science subset, separate rates (seven components)</h3>
 <ul>{battery_items_sci}</ul>
 <p>Terminal-Bench 4.0 measures general terminal execution; FrontierCode 2.0 tests
 changes to real software repositories; Terminal-Bench-Science 0.1 covers scientific
@@ -1126,17 +1193,19 @@ are no fixed linear score weights. The soft-minimum lies
 between a model's worst and mean z-score. Weak dimensions receive more influence:
 balanced excellence is rewarded, while strength on one benchmark cannot linearly
 cancel weakness on another.</p>
-<p><strong>The combined Omniscience Index is not scored in either battery.</strong> Accuracy and
-non-hallucination each enter the partition sum once, alongside the other components.
+<p><strong>Combined mode scores AA-Omniscience v1.1 — Net Score (combined)</strong>,
+the published −100 to 100 metric, in place of both separate rates. Combined all-benchmarks
+and science views have nine and six components. Each of the four views has an independently
+computed complete cohort and normalization; scores across modes are not directly comparable.
 The former SciCode, AA-LCR, original HLE and original CritPt measurements are not used.
 FrontierCode 1.x, full CritPt v2 and AA-Omniscience v1 cannot substitute for the named
 versions or hard subset. Versions are not treated as interchangeable.</p>
 <p class="note">The battery, evaluation versions and cohort changed with AA v5.0.
 These values and rankings are not directly comparable with either the former
 pre-v5 battery or the initial six-component v5 score that used the combined Omniscience Index. Missing data is never filled with older benchmark versions.</p>
-<p class="note">Omniscience accuracy and non-hallucination are used directly as separate rates,
-not reconstructed from the combined Index. Briefcase Elo and the AutomationBench-AA and
-GDP.pdf rates enter as published. If the cohort is too small or any required spread is
+<p class="note">In separate mode, Omniscience accuracy and non-hallucination are used directly as separate rates,
+not reconstructed from the combined Index. In combined mode, the published Net Score is used instead.
+Briefcase Elo and the AutomationBench-AA and GDP.pdf rates enter as published. If the cohort is too small or any required spread is
 zero, generation aborts rather than computing a partial-dimension index.</p>
 
 <h2>Cost per expensive agentic task</h2>
@@ -1176,9 +1245,10 @@ its published cache-hit and pricing assumptions; they are not cache-free estimat
 <h2>How this differs from AA's Intelligence Index v5.0</h2>
 <p>AA's v5.0 index covers Knowledge Work, Coding, Science and General, at 25% each.
 Its weights and task counts, parsed for this run, are shown below. AA-Omniscience's
-15% share comprises 10% accuracy and 5% non-hallucination. SoftMinZ uses those two
-measured rates as independently standardized components, but does not copy AA’s 2:1
-performance weighting: every component enters the normalized partition sum once.</p>
+15% share comprises 10% accuracy and 5% non-hallucination. In separate mode SoftMinZ
+uses the two measured rates as independently standardized components, but does not
+copy AA’s 2:1 performance weighting; in combined mode it uses the published Net Score.
+In either mode every component enters the normalized partition sum once.</p>
 <table><thead><tr><th>AA v5 evaluation</th><th class="num">Live II weight</th>
 <th class="num">Task count</th></tr></thead><tbody>{all_weight_rows}</tbody></table>
 <p>We use AA's weights only to undo its cost weighting. Our performance index uses
@@ -1242,6 +1312,17 @@ def main(max_age_h=12):
               file=sys.stderr)
         raise SystemExit(1)
 
+    combined = {}
+    for key, battery in [('all-combined', BATTERY_ALL_COMBINED), ('sci-combined', BATTERY_COMBINED)]:
+        ranked, _, stats = zscore_battery(models, battery)
+        print(f'scored ({key}): {len(ranked)} of {len(all_rows)}', file=sys.stderr)
+        if not ranked or set(stats) != set(battery):
+            print(f'FATAL: no complete {key} scored cohort/statistics; preserving published artifacts.', file=sys.stderr)
+            raise SystemExit(1)
+        front = pareto(ranked, 'cost_task', 'softminz')
+        combined[key] = (ranked, front, stats)
+        print(f'pareto frontier ({key}): {len(front)}', file=sys.stderr)
+
     front_sci = pareto(ranked_sci, 'cost_task', 'softminz')
     front_all = pareto(ranked_all, 'cost_task', 'softminz')
     print(f'pareto frontier: {len(front_sci)} science models, {len(front_all)} all-benchmarks models', file=sys.stderr)
@@ -1249,27 +1330,35 @@ def main(max_age_h=12):
     img_sci = DATA / 'softminz_pareto_science.png'
     make_chart(ranked_sci, front_sci, img_sci)
     img_b64_sci = base64.b64encode(img_sci.read_bytes()).decode()
-    # Also publish the chart under docs/ so og:image has a real URL to
-    # point at when the page link is shared.
-    (DOCS / 'softminz_pareto_science.png').write_bytes(img_sci.read_bytes())
-
     img_all = DATA / 'softminz_pareto.png'
     make_chart(ranked_all, front_all, img_all)
     img_b64_all = base64.b64encode(img_all.read_bytes()).decode()
-    (DOCS / 'softminz_pareto.png').write_bytes(img_all.read_bytes())
+    variants = {}
+    for key, (ranked, front, stats) in combined.items():
+        filename = f'softminz_pareto_{key}.png'
+        path = DATA / filename
+        make_chart(ranked, front, path)
+        image = path.read_bytes()
+        variants[key] = (ranked, front, stats, base64.b64encode(image).decode())
 
-    # docs/CNAME is GitHub's custom-domain binding. The pipeline must preserve
-    # it across regenerations or the custom domain silently detaches on the
-    # next deploy — write it back if a regeneration ever removes it.
+    # Render the entire page (including both JS dependencies) before replacing
+    # any published artifact. A late template or script failure preserves docs/.
+    html = build_html(ranked_sci, front_sci, zstats_sci, ranked_all,
+                      front_all, zstats_all, report, models,
+                      img_b64_sci, img_b64_all, ii_weights, ii_source,
+                      variants=variants)
+    outputs = {'softminz_pareto_science.png': img_sci.read_bytes(),
+               'softminz_pareto.png': img_all.read_bytes()}
+    outputs.update({f'softminz_pareto_{key}.png': base64.b64decode(value[3])
+                    for key, value in variants.items()})
+    for filename, content in outputs.items():
+        (DOCS / filename).write_bytes(content)
     cname = DOCS / 'CNAME'
     if not cname.exists():
         cname.write_text('softminz.org\n')
         print('restored docs/CNAME (custom-domain binding)', file=sys.stderr)
-
     page = DOCS / 'index.html'
-    page.write_text(build_html(ranked_sci, front_sci, zstats_sci, ranked_all,
-                               front_all, zstats_all, report, models,
-                               img_b64_sci, img_b64_all, ii_weights, ii_source))
+    page.write_text(html)
     print(f'wrote {page} ({page.stat().st_size} bytes)', file=sys.stderr)
 
     print('\nTOP 10 BY ALL-BENCHMARKS SOFTMINZ:')

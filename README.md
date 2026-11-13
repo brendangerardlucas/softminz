@@ -19,19 +19,18 @@ The default ranking uses the full AA v5 suite:
 8. [AutomationBench-AA](https://artificialanalysis.ai/evaluations/automationbench-aa): partial score
 9. [GDP.pdf](https://artificialanalysis.ai/evaluations/gdp-pdf): all-pass rate
 
-The site toggle switches between this default all-benchmarks ranking and the
-**science subset** (items 1–6 above: seven components). AA-Omniscience v1.1
-contributes its measured **accuracy** and **non-hallucination rate**
-(1 minus AA’s hallucination rate) as two separate components in **both**
-batteries, so nine benchmarks yield ten components.
-Each component has its own mean, sample standard deviation and z-score.
-The combined Omniscience Index is **not** an additional input in either battery.
+The benchmark toggle switches between the all-benchmarks ranking and the
+**science subset** (items 1–6 above). A separate Omniscience toggle defaults to
+**separate** accuracy and non-hallucination rate (1 minus AA's hallucination
+rate), or replaces both with AA's published v1.1 **Net Score** (−100 to 100).
+The all-benchmarks battery has ten separate or nine combined components; the
+science battery has seven separate or six combined components. The Net Score is
+not reconstructed from rates and never comes from the legacy v1 field.
 
-A model must have a finite score on **all ten** components (default battery) or
-**all seven** (science subset) to be ranked in that view or contribute
-to **any** normalization pool. Every component is z-scored across the same complete
-cohort, using the sample standard deviation (n − 1). Then, with n = 10 by default
-and n = 7 in the science view:
+Each of the four views has its own strict complete cohort: a model must have a
+finite score on every component in that view to be ranked or contribute to its
+normalization. Each component uses that cohort's sample standard deviation
+(n − 1). With n equal to that view's component count:
 
 ```text
 z_b = (score_b − cohort_mean_b) / cohort_sample_SD_b
@@ -43,7 +42,7 @@ Each component contributes one Boltzmann factor to the partition sum; dividing
 by the component count takes their **mean** before the negative logarithm. This is **not a
 linear weighted average of z-scores**. Its local influence is
 ∂SoftMinZ/∂z_i = exp(−z_i)/Z, so weak dimensions exert more influence.
-AA’s 10% accuracy / 5% non-hallucination weighting is not copied into performance.
+AA’s 10% accuracy / 5% non-hallucination weighting is not copied into the separate mode.
 SoftMinZ lies between a model’s worst and mean z-score; it rewards balanced
 performance and discounts weakness. Partial profiles are excluded, never imputed.
 Tiny cohorts or zero-variance required dimensions abort before output replacement.
@@ -51,16 +50,16 @@ Tiny cohorts or zero-variance required dimensions abort before output replacemen
 This replaces the previous battery: original HLE, original CritPt, SciCode, AA-LCR
 are no longer used. The current v1.1 non-hallucination rate is explicitly included. Older versions
 (FrontierCode 1.x, AA-Omniscience v1, original HLE/CritPt) and full CritPt v2 cannot
-fill missing measurements for the named versions or hard subset. **The new scores and ranks are not directly comparable with the old battery
-or the initial six-component v5 version that used the combined Omniscience Index.** AnalystAgent remains
-watch-only, never silently added to either battery.
+fill missing measurements for the named versions or hard subset. **Scores and ranks
+across different batteries, modes or cohorts are not directly comparable.** AnalystAgent
+remains watch-only, never silently added to a battery.
 
 ## Head-to-head comparison
 
 Below the ranking tables in each view, choose **Model A** and **Model B** to compare every
 scored model, including those without a published cost. Each view's panel shows both
-models’ component z-scores for that view’s battery — ten in the all-benchmarks view,
-seven science-component z-scores in the science view — and **Δz = A − B**: positive favors A,
+models’ component z-scores for that view’s battery — ten or nine in the
+all-benchmarks view, seven or six in the science view — and **Δz = A − B**: positive favors A,
 negative favors B. Swap models to reverse the comparison; selecting the same model gives
 zero deltas. Native labeled selectors support keyboard navigation.
 
@@ -75,8 +74,10 @@ The default is GPT-6 Astra High versus Claude Opus 5.5 Max when available, other
 two ranked models. The default table is server-rendered and readable without
 JavaScript; changing selections requires JavaScript. All data and vanilla browser
 code are embedded in the single generated HTML page: no dependencies, backend
-comparison endpoint or selection-time network requests. The existing ranking
-buttons still work without JavaScript.
+comparison endpoint or selection-time network requests. Without JavaScript the
+split-mode default comparison remains readable; the split benchmark and sort
+links work individually, but changing one can reset the other because they share
+a URL hash. Combined mode and independent controls require JavaScript.
 
 ## Cost: expensive workloads, same formula
 
@@ -133,24 +134,25 @@ log-cost plot or Pareto frontier. The generated page reports actual priced cover
 - Weights/task counts must match the current v5 methodology schema, be positive,
   and have weights summing to one. No stale-weight fallback.
 - Preserve `docs/CNAME` (`softminz.org`). Publish one self-contained HTML page with
-  embedded charts and four ranking views (two benchmark sets × SoftMinZ/cost sorts),
-  plus identical PNGs for social previews.
+  embedded charts and eight ranking tables (two benchmark sets × two metric modes ×
+  two sorts), plus identical PNGs for the four charts.
 
 ## Run and test
 
 Generation requires Python 3.10+, matplotlib and the bundled `head_to_head.js`
-source file. No AA API key. Node.js is optional for the browser-code unit tests.
+and `view_controls.js` sources. No AA API key. Node.js is optional for browser-code tests.
 
 ```bash
 TZ=UTC python3 public_watch.py --fresh
 python3 -m unittest -v test_public_watch
-node --test test_head_to_head.js
+node --test test_head_to_head.js test_view_controls.js
 ```
 
 `--fresh` bypasses every source cache. Without it, the scrape cache in `data/` has
 a maximum age of 12 hours. Outputs are `docs/index.html`,
-`docs/softminz_pareto.png`, `docs/softminz_pareto_science.png` and their
-`data/` mirrors.
+`docs/softminz_pareto.png`, `docs/softminz_pareto_science.png`,
+`docs/softminz_pareto_all-combined.png`, `docs/softminz_pareto_sci-combined.png`
+and their `data/` mirrors.
 
 ## Publishing
 
