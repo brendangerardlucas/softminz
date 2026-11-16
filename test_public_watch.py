@@ -44,6 +44,21 @@ def flight_page(record):
     return 'self.__next_f.push([1,' + json.dumps(json.dumps(record, separators=(',', ':'))) + '])'
 
 
+def leaderboard_page(records, decoys=()):
+    """AA leaderboard flight payload (2026-11 format): one initialModels array
+    of records identified by UUID id + release.slug + suffix, no top-level slug."""
+    return flight_page({'children': [{'shortName': d, 'name': d, 'slug': d} for d in decoys],
+                        'props': {'initialModels': list(records)}})
+
+
+def lb_record(mid, release, suffix=None, **fields):
+    record = dict(id=mid, release={'slug': release, 'name': release}, name=f'{release} ({suffix})',
+                  shortName=release, suffix=suffix, deprecated=False, isReasoning=True,
+                  isOpenWeights=False, contextWindowTokens=1000, modelCreatorName='Test')
+    record.update(fields)
+    return record
+
+
 def methodology_html(weights=WEIGHTS):
     rows = ''.join('<tr><td>' + label + '</td><td>' + str(weights[slug]['tasks'])
                    + '</td><td>3</td><td>' + str(weights[slug]['weight'] * 100) + '%</td></tr>'
@@ -108,28 +123,96 @@ class ScoreCompatibilityTests(unittest.TestCase):
         self.assertEqual(w._score_value({'omniscience': -20}, 'omniscience'), -20)
 
     def test_scrape_nested_primary_with_flat_evaluation_pages(self):
-        common = dict(slug='test-model', name='Test', shortName='Test', deprecated=False,
+        net = 100*(.4763333333333333 - (1-.4763333333333333)*(1-.6549968173138129))
+        common = dict(name='Test', shortName='Test', deprecated=False,
                       isReasoning=True, isOpenWeights=False, contextWindowTokens=1000000,
-                      intelligenceIndex=51., omniscience=100*(.4763333333333333 - (1-.4763333333333333)*(1-.6549968173138129)))
-        primary = dict(common, scores=NESTED)
-        evaluation = dict(common, **{k:v for k,v in LEGACY.items()
-                          if k not in ('omniscienceAccuracy','omniscienceNonHallucination')},
+                      intelligenceIndex=51., omniscience=net)
+        primary = lb_record('uuid-test', 'test-model', 'Max', **dict(common, scores=NESTED))
+        # Evaluation pages still publish the per-variant slug next to the same id.
+        evaluation = dict(common, id='uuid-test', slug='test-model',
+                          release={'slug': 'test-model', 'name': 'Test'},
+                          **{k:v for k,v in LEGACY.items()
+                             if k not in ('omniscienceAccuracy','omniscienceNonHallucination')},
                           **NEW_FLAT)
         evaluation['omniscienceBreakdown'] = {'accuracy': .4763333333333333,
                                               'hallucinationRate': 1-.6549968173138129}
         evaluation['omniscienceV1'] = {'accuracy': .99, 'hallucinationRate': .99}
         def fetch(url, *args):
-            return flight_page(primary if url == w.MODELS_PAGE else evaluation)
+            return leaderboard_page([primary]) if url == w.MODELS_PAGE else flight_page(evaluation)
         with patch.object(w, 'fetch', side_effect=fetch), \
-             patch.object(w, '_fetch_cost_breakdown', return_value=({}, 'test')), \
+             patch.object(w, '_fetch_cost_breakdown', return_value=({}, 'test', {})), \
              patch.object(w.time, 'sleep'):
             models, report = w.scrape(ii_weights=WEIGHTS)
+        self.assertEqual(set(models), {'uuid-test'})
         for key in w.BATTERY:
-            self.assertIsNotNone(models['test-model'].get(key), key)
+            self.assertIsNotNone(models['uuid-test'].get(key), key)
         for key in w.BATTERY_ALL:
-            self.assertIsNotNone(models['test-model'].get(key), key)
-        self.assertEqual(models['test-model']['analystAgent'], .42)
+            self.assertIsNotNone(models['uuid-test'].get(key), key)
+        self.assertEqual(models['uuid-test']['analystAgent'], .42)
+        self.assertEqual(models['uuid-test']['variant_slug'], 'test-model')
         self.assertEqual(sum('validated (' in str(v) for v in report.values()), 13)
+
+
+class LeaderboardFormatTests(unittest.TestCase):
+    """AA 2026-11: leaderboard records lost their per-variant slug. Variants of one
+    release share release.slug and differ only by UUID id and suffix."""
+
+    def test_initial_models_parsed_by_unique_id_without_merging_variants(self):
+        page = w.flight(leaderboard_page(
+            [lb_record('id-max', 'astra', 'Max'), lb_record('id-high', 'astra', 'High')],
+            decoys=['astra', 'unrelated-card']))
+        records = w.leaderboard_records(page)
+        self.assertEqual(set(records), {'id-max', 'id-high'})
+        self.assertEqual(records['id-high']['suffix'], 'High')
+
+    def test_malformed_identity_fails_closed(self):
+        dup = [lb_record('same', 'astra', 'Max'), lb_record('same', 'astra', 'High')]
+        no_id = [dict(lb_record('x', 'astra', 'Max'), id=None)]
+        no_release = [{k: v for k, v in lb_record('x', 'astra').items() if k != 'release'}]
+        old_format = [{'slug': 'astra', 'shortName': 'astra', 'name': 'Astra'}]
+        for bad in (dup, no_id, no_release, old_format, []):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                w.leaderboard_records(w.flight(leaderboard_page(bad)))
+        with self.assertRaises(ValueError):
+            w.leaderboard_records('no models here')
+        two = leaderboard_page([lb_record('a', 'r')]) + leaderboard_page([lb_record('b', 'r')])
+        with self.assertRaises(ValueError):
+            w.leaderboard_records(w.flight(two))
+
+    def test_evaluation_cross_check_joins_variant_by_id_not_release_slug(self):
+        max_ = lb_record('id-max', 'astra', 'Max', scores={'hle-diamond': .70})
+        high = lb_record('id-high', 'astra', 'High', scores={'hle-diamond': .60})
+        # Only the flagship variant is on the evaluation page, under the shared release slug.
+        flagship = dict(max_, slug='astra', hleDiamond=.70)
+        def fetch(url, *args):
+            return leaderboard_page([max_, high]) if url == w.MODELS_PAGE else flight_page(flagship)
+        with patch.object(w, 'fetch', side_effect=fetch), \
+             patch.object(w, 'validate_omniscience_consistency', return_value=1), \
+             patch.object(w, '_fetch_cost_breakdown', return_value=({}, 'test', {})), \
+             patch.object(w.time, 'sleep'):
+            models, report = w.scrape(ii_weights=WEIGHTS)
+        self.assertEqual(report['hle-diamond'], 'validated (1 checked vs evaluation-page payload (JSON-LD score rows unavailable))')
+        self.assertEqual(models['id-high']['hle_diamond'], .60)
+        self.assertEqual(models['id-max']['hle_diamond'], .70)
+
+    def test_jsonld_rows_are_rekeyed_from_variant_slug_to_id(self):
+        truth = {'astra': .7, 'astra-high': .6, 'unknown-model': .5}
+        self.assertEqual(w._rekey_by_id(truth, {'id-max': 'astra', 'id-high': 'astra-high'}),
+                         {'id-max': .7, 'id-high': .6})
+
+    def test_conflicting_id_slug_pairs_fail_closed(self):
+        mapping = {'id-max': 'astra'}
+        w._merge_slug_map(mapping, {'id-max': 'astra', 'id-high': 'astra-high'})
+        self.assertEqual(mapping, {'id-max': 'astra', 'id-high': 'astra-high'})
+        with self.assertRaises(ValueError):
+            w._merge_slug_map(mapping, {'id-max': 'astra-max'})
+        with self.assertRaises(ValueError):
+            w._merge_slug_map(mapping, {'id-other': 'astra'})
+
+    def test_terminalbench_uses_canonical_unredirected_url(self):
+        self.assertIn('terminalbench-4-0', w.PAGES)
+        self.assertNotIn('terminalbench-v4-0', w.PAGES)
+        self.assertTrue(w.BENCH_URL['terminalbench_v40'].endswith('/terminalbench-4-0'))
 
 
 class MethodologyAndCostTests(unittest.TestCase):
@@ -217,9 +300,13 @@ class CostSplitIntegrityTests(unittest.TestCase):
 
 
 class CostSourceCoverageTests(unittest.TestCase):
-    def cost_record(self, slug, factor=1.):
+    """Cost splits come from /models/<release.slug> pages, which list every variant
+    of a release with its per-variant slug, UUID id and complete v5 split."""
+
+    def cost_record(self, mid, release, slug, factor=1.):
         values = {k: factor * .01 * (i + 1) for i,k in enumerate(WEIGHTS)}
-        record = dict(slug=slug, shortName=slug, name=slug, deprecated=False,
+        record = dict(id=mid, slug=slug, release={'slug': release, 'name': release},
+                      shortName=slug, name=slug, deprecated=False,
                       isReasoning=True, isOpenWeights=False, contextWindowTokens=100,
                       priceClass='high', modelCreatorName='Test', intelligenceIndex=1.)
         record['intelligenceIndexCostPerTask'] = {'cost': {'total': sum(values.values())},
@@ -227,34 +314,61 @@ class CostSourceCoverageTests(unittest.TestCase):
         return record
 
     def primary(self, records):
-        return {r['slug']: dict(r, intelligenceIndexCostPerTask=r['intelligenceIndexCostPerTask']['cost']['total'])
+        """Leaderboard view of the same models: id + release, aggregate total only, no slug."""
+        return {r['id']: dict({k: v for k, v in r.items() if k != 'slug'},
+                              intelligenceIndexCostPerTask=r['intelligenceIndexCostPerTask']['cost']['total'])
                 for r in records}
 
-    def test_merge_partial_carriers_by_exact_slug(self):
-        a,b,c = self.cost_record('a'),self.cost_record('b',2),self.cost_record('c',3)
-        def fetch(url,*args): return flight_page([a,c] if url.endswith('/a') else [b])
-        with patch.object(w,'fetch',side_effect=fetch), patch.object(w.time,'sleep'):
-            costs,source=w._fetch_cost_breakdown(self.primary([a,b,c]),0)
-        self.assertEqual(set(costs),{'a','b','c'})
-        self.assertNotEqual(costs['a'],costs['b'])
-        self.assertIn('a',source); self.assertIn('b',source)
+    def test_variants_of_one_release_get_their_own_split_by_exact_id(self):
+        mx, hi = self.cost_record('id-max','astra','astra'), self.cost_record('id-high','astra','astra-high',2)
+        other = self.cost_record('id-o','other','other',3)
+        def fetch(url,*args): return flight_page([mx,hi] if url.endswith('/astra') else [other])
+        with patch.object(w,'fetch',side_effect=fetch) as f, patch.object(w.time,'sleep'):
+            costs,source,slugs=w._fetch_cost_breakdown(self.primary([mx,hi,other]),0)
+        self.assertEqual(set(costs),{'id-max','id-high','id-o'})
+        self.assertNotEqual(costs['id-max'],costs['id-high'])
+        self.assertEqual(slugs,{'id-max':'astra','id-high':'astra-high','id-o':'other'})
+        self.assertEqual(sorted(c.args[0] for c in f.call_args_list),
+                         [w.MODELS_DIR+'astra', w.MODELS_DIR+'other'])
+        self.assertIn('2 release pages', source)
+
+    def test_release_already_covered_by_another_page_is_not_refetched(self):
+        a, b = self.cost_record('id-a','a','a'), self.cost_record('id-b','b','b',2)
+        with patch.object(w,'fetch',return_value=flight_page([a,b])) as f, patch.object(w.time,'sleep'):
+            costs,_,_=w._fetch_cost_breakdown(self.primary([a,b]),0)
+        self.assertEqual(set(costs),{'id-a','id-b'})
+        self.assertEqual(f.call_count,1)
 
     def test_missing_published_variant_split_aborts(self):
-        a,b=self.cost_record('a'),self.cost_record('b')
-        with patch.object(w,'fetch',return_value=flight_page([a])), patch.object(w.time,'sleep'):
-            with self.assertRaises(SystemExit): w._fetch_cost_breakdown(self.primary([a,b]),0)
+        mx, hi = self.cost_record('id-max','astra','astra'), self.cost_record('id-high','astra','astra-high')
+        with patch.object(w,'fetch',return_value=flight_page([mx])), patch.object(w.time,'sleep'):
+            with self.assertRaises(SystemExit): w._fetch_cost_breakdown(self.primary([mx,hi]),0)
 
     def test_leaderboard_aggregate_contradiction_aborts(self):
-        a=self.cost_record('a'); primary=self.primary([a])
-        primary['a']['intelligenceIndexCostPerTask'] += .01
-        with patch.object(w,'fetch',return_value=flight_page([a])):
-            with self.assertRaises(SystemExit): w._fetch_cost_breakdown(primary,0)
+        a=self.cost_record('id-a','a','a'); primary=self.primary([a])
+        primary['id-a']['intelligenceIndexCostPerTask'] += .01
+        with patch.object(w,'fetch',return_value=flight_page([a])), patch.object(w.time,'sleep'):
+            with self.assertRaisesRegex(SystemExit, 'disagrees'): w._fetch_cost_breakdown(primary,0)
 
-    def test_cached_partial_carrier_is_refetched(self):
-        a,b=self.cost_record('a'),self.cost_record('b',2)
-        with patch.object(w,'fetch',side_effect=[flight_page([a]),flight_page([a,b])]) as fetch:
-            costs,source=w._fetch_cost_breakdown(self.primary([a,b]),12)
-        self.assertEqual(set(costs),{'a','b'})
+    def test_conflicting_splits_for_one_id_abort(self):
+        a, b = self.cost_record('id-a','a','a'), self.cost_record('id-b','b','b',2)
+        evals = a['intelligenceIndexCostPerTask']['evaluations']
+        swapped = [dict(e, weightedCostPerTask=v) for e, v in
+                   zip(evals, reversed([e['weightedCostPerTask'] for e in evals]))]
+        # Same published total (passes the aggregate check), different split.
+        a_conflict = dict(a, intelligenceIndexCostPerTask=dict(a['intelligenceIndexCostPerTask'],
+                                                              evaluations=swapped))
+        def fetch(url,*args): return flight_page([a] if url.endswith('/a') else [b, a_conflict])
+        with patch.object(w,'fetch',side_effect=fetch), patch.object(w.time,'sleep'):
+            with self.assertRaisesRegex(SystemExit, 'conflicting'):
+                w._fetch_cost_breakdown(self.primary([a,b]),0)
+
+    def test_cached_partial_release_page_is_refetched(self):
+        mx, hi = self.cost_record('id-max','astra','astra'), self.cost_record('id-high','astra','astra-high',2)
+        with patch.object(w,'fetch',side_effect=[flight_page([mx]),flight_page([mx,hi])]) as fetch, \
+             patch.object(w.time,'sleep'):
+            costs,_,_=w._fetch_cost_breakdown(self.primary([mx,hi]),12)
+        self.assertEqual(set(costs),{'id-max','id-high'})
         self.assertEqual(fetch.call_args_list[1].args[2],0)
 
 
@@ -345,6 +459,29 @@ class HeadToHeadTests(unittest.TestCase):
         data=w.comparison_data(ranked)
         self.assertEqual(data['default_a'],'gpt-6-astra-high')
         self.assertEqual(data['default_b'],'claude-opus-5-5')
+
+    def test_default_pair_resolved_from_variant_slug_when_keyed_by_id(self):
+        ranked=self.rows()
+        ranked[2]['variant_slug']='gpt-6-astra-high'; ranked[4]['variant_slug']='claude-opus-5-5'
+        data=w.comparison_data(ranked)
+        self.assertEqual(data['default_a'],ranked[2]['slug'])
+        self.assertEqual(data['default_b'],ranked[4]['slug'])
+
+    def test_ranking_ties_break_by_name_not_opaque_key(self):
+        base = complete_models(1, battery=w.BATTERY_ALL)['m0']
+        models = {key: dict(base, name=name)
+                  for key, name in [('ffff-uuid', 'Alpha'), ('0000-uuid', 'Beta')]}
+        models.update({f'pad{i}': m for i, m in enumerate(complete_models(5, battery=w.BATTERY_ALL).values())
+                       if i})
+        ranked, _, stats = w.zscore_battery(models)
+        ranked_all, _, stats_all = w.zscore_battery(models, w.BATTERY_ALL)
+        for rows in (ranked, ranked_all):
+            tied = [r for r in rows if r['name'] in ('Alpha', 'Beta')]
+            self.assertEqual([r['name'] for r in tied], ['Alpha', 'Beta'])
+            self.assertEqual(tied[0]['softminz'], tied[1]['softminz'])
+        page = w.build_html(ranked, [], stats, ranked_all, [], stats_all, {}, models,
+                            'dGVzdA==', 'dGVzdA==', WEIGHTS, 'test')
+        self.assertLess(page.index('<td>Alpha</td>'), page.index('<td>Beta</td>'))
 
     def test_missing_preferred_model_falls_back_to_two_distinct_models(self):
         ranked=self.rows(); ranked[0]['slug']='claude-opus-5-5'

@@ -8,7 +8,7 @@ Artificial Analysis Intelligence Index **v5.0** transition (2026-10-28).
 
 The default ranking uses the full AA v5 suite:
 
-1. [Terminal-Bench 4.0](https://artificialanalysis.ai/evaluations/terminalbench-v4-0)
+1. [Terminal-Bench 4.0](https://artificialanalysis.ai/evaluations/terminalbench-4-0)
 2. [FrontierCode 2.0](https://artificialanalysis.ai/evaluations/frontiercode-2-0)
 3. [AA-Omniscience v1.1](https://artificialanalysis.ai/evaluations/omniscience):
    **accuracy** and **non-hallucination rate**, two separate components
@@ -128,6 +128,11 @@ log-cost plot or Pareto frontier. The generated page reports actual priced cover
 
 - Primary score data: [AA model leaderboard](https://artificialanalysis.ai/leaderboards/models)
   (nested slug-keyed scores; exact version-specific flat fields on evaluation pages).
+- Model identity: since November 2026 the leaderboard identifies each reasoning-effort
+  variant by AA's UUID model `id`; `release.slug` is shared by all variants of a release.
+  Every join (evaluation-page cross-checks, cost splits from `/models/<release.slug>`
+  pages) uses the exact `id`, never the shared release slug. Duplicate or missing ids,
+  or an id published with two different variant slugs, abort generation.
 - Each battery field and the headline Intelligence Index are checked against
   overlapping evaluation-page values, using JSON-LD or the page’s own payload.
   Mismatches, failed checks and unavailable required comparisons abort generation.

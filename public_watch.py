@@ -84,7 +84,7 @@ BENCH_LABEL = {
     'gdpPdfAllPass': 'GDP.pdf',
 }
 BENCH_URL = {
-    'terminalbench_v40': BASE + 'terminalbench-v4-0',
+    'terminalbench_v40': BASE + 'terminalbench-4-0',
     'frontiercode_v20': BASE + 'frontiercode-2-0',
     'omniscience_v11_accuracy': BASE + 'omniscience',
     'omniscience_v11_non_hallucination': BASE + 'omniscience',
@@ -133,72 +133,97 @@ def aggregate_cost(record):
     return None
 
 
-def _fetch_cost_breakdown(records, max_age_h=12):
-    """Merge exact-slug v5 splits and require coverage of all published totals.
+def _merge_slug_map(dst, src):
+    """Merge AA-published {model id: per-variant slug} pairs, failing closed on drift.
 
-    Some public model pages embed the full dataset; others only initial selected
-    models. Try several carriers, then genuine self-pages for any remaining
-    aggregate-bearing model. Never copy a split to a sibling effort variant.
+    An id that maps to two slugs, or a slug claimed by two ids, means the source
+    identity semantics changed; joining through such a map could pair a score
+    with the wrong reasoning-effort variant.
     """
-    wanted = {s for s, r in records.items() if aggregate_cost(r) is not None}
-    merged, carriers, errors = {}, [], []
+    taken = {slug: mid for mid, slug in dst.items()}
+    for mid, slug in src.items():
+        if dst.get(mid, slug) != slug:
+            raise ValueError(f'model id {mid} published as both {dst[mid]} and {slug}')
+        if taken.get(slug, mid) != mid:
+            raise ValueError(f'variant slug {slug} published for two model ids')
+        dst[mid] = slug
+        taken[slug] = mid
+    return dst
 
-    def read_carrier(cand):
-        path = DATA / f'model-cost-{cand}.html'
-        raw = fetch(MODELS_DIR + cand, path, max_age_h)
-        recs = extract_records(flight(raw))
-        splits = {slug: split for slug, rec in recs.items()
-                  if (split := extract_cost_split(rec)) is not None}
-        # A cached initial-selection page can miss variants/new v5 components.
-        if max_age_h > 0 and not (wanted - set(merged)) <= set(splits):
-            raw = fetch(MODELS_DIR + cand, path, 0)
-            recs = extract_records(flight(raw))
-            splits = {slug: split for slug, rec in recs.items()
-                      if (split := extract_cost_split(rec)) is not None}
-        for slug, split in splits.items():
-            if slug in merged and any(abs(split[k] - merged[slug][k]) > 1e-6
-                                      for k in II_BENCHMARK_SLUGS):
-                raise ValueError(f'conflicting cost splits for {slug}')
-            expected = aggregate_cost(records.get(slug, {}))
+
+def _rekey_by_id(truth, id2slug):
+    """Translate slug-keyed source rows to model ids; unmappable rows are dropped."""
+    slug2id = {slug: mid for mid, slug in id2slug.items()}
+    return {slug2id[s]: v for s, v in truth.items() if s in slug2id}
+
+
+def _records_by_id(records):
+    """{model id: record} for slug-keyed page records that publish an AA model id."""
+    return {r['id']: r for r in records.values() if isinstance(r.get('id'), str) and r['id']}
+
+
+def _fetch_cost_breakdown(records, max_age_h=12):
+    """Merge exact-id v5 splits and require coverage of all published totals.
+
+    AA 2026-11: leaderboard records carry a UUID ``id`` and a ``release.slug``
+    shared by every reasoning-effort variant, not a per-variant slug. Each
+    ``/models/<release.slug>`` page lists every variant of that release with its
+    per-variant slug, id and complete v5 split. Splits are joined only by exact
+    id, so a split is never copied to a sibling effort variant.
+
+    Returns ({id: split}, source description, {id: per-variant slug}).
+    """
+    wanted = {mid for mid, r in records.items() if aggregate_cost(r) is not None}
+    release_of = {mid: r['release']['slug'] for mid, r in records.items()}
+    merged, slugs, pages, errors = {}, {}, [], []
+
+    def read_release(release):
+        path = DATA / f'model-cost-{release}.html'
+        own = {mid for mid in wanted if release_of[mid] == release}
+
+        def parse(age):
+            page = _records_by_id(extract_records(flight(fetch(MODELS_DIR + release, path, age))))
+            return page, {mid: split for mid, rec in page.items()
+                          if (split := extract_cost_split(rec)) is not None}
+        page, splits = parse(max_age_h)
+        # A cached page can predate a newly listed variant or v5 component.
+        if max_age_h > 0 and not own <= set(splits):
+            page, splits = parse(0)
+        _merge_slug_map(slugs, {mid: rec['slug'] for mid, rec in page.items()})
+        for mid, split in splits.items():
+            if mid in merged and any(abs(split[k] - merged[mid][k]) > 1e-6
+                                     for k in II_BENCHMARK_SLUGS):
+                raise ValueError(f'conflicting cost splits for {mid}')
+            expected = aggregate_cost(records.get(mid, {}))
             if expected is not None and abs(sum(split.values()) - expected) > 1e-6:
-                raise ValueError(f'cost split disagrees with leaderboard total for {slug}')
-            merged[slug] = split
+                raise ValueError(f'cost split disagrees with leaderboard total for {mid}')
+            merged[mid] = split
         if splits:
-            carriers.append(cand)
+            pages.append(release)
 
-    candidates = list(dict.fromkeys(sorted(records)[:5]
-                      + (['command-a-plus'] if 'command-a-plus' in records else [])))
-    attempted = set()
-    for cand in candidates:
-        attempted.add(cand)
+    for release in sorted({release_of[mid] for mid in wanted}):
+        # Release pages also embed other models' records; skip releases already covered.
+        if {mid for mid in wanted if release_of[mid] == release} <= set(merged):
+            continue
         try:
-            read_carrier(cand)
+            read_release(release)
         except ValueError as exc:
             raise SystemExit(f'FATAL: invalid v5 cost source: {exc}') from exc
         except Exception as exc:
-            errors.append(f'{cand}: {exc}')
-        if merged and wanted <= set(merged):
-            break
-    # Recover only published measured costs from the matching model's own page.
-    for cand in sorted(wanted - set(merged) - attempted):
-        try:
-            read_carrier(cand)
-        except ValueError as exc:
-            raise SystemExit(f'FATAL: invalid v5 cost source: {exc}') from exc
-        except Exception as exc:
-            errors.append(f'{cand}: {exc}')
+            errors.append(f'{release}: {exc}')
         time.sleep(0.25)
     missing = wanted - set(merged)
     if not merged or missing:
-        detail = f'missing published splits: {", ".join(sorted(missing))}' if missing else 'no complete v5 splits'
+        names = sorted(f'{records[mid].get("name", mid)} ({mid})' for mid in missing)
+        detail = f'missing published splits: {", ".join(names)}' if missing else 'no complete v5 splits'
         raise SystemExit(f'FATAL: {detail}; refusing incomplete cost coverage ({"; ".join(errors)}).')
-    return merged, '+'.join(carriers)
+    return merged, f'{len(pages)} release pages', slugs
 
 # Per-evaluation pages cross-check the leaderboard scrape using JSON-LD
 # score rows or, when absent, their model payloads:
 # page slug -> (payload field, JSON-LD label).
 PAGES = {
-    'terminalbench-v4-0': ('terminalbench_v40', 'Terminal-Bench 4.0'),
+    'terminalbench-4-0': ('terminalbench_v40', 'Terminal-Bench 4.0'),
     'frontiercode-2-0': ('frontiercode_v20', 'FrontierCode 2.0'),
     'omniscience': [
         ('omniscience_v11_accuracy', 'AA-Omniscience v1.1 Accuracy'),
@@ -310,6 +335,38 @@ def extract_records(payload):
                 if s not in out or len(obj) > len(out[s]):
                     out[s] = obj
                 break
+    return out
+
+
+def leaderboard_records(payload):
+    """{model id: record} from the leaderboard's single ``initialModels`` array.
+
+    AA 2026-11: records are identified by a UUID ``id`` plus ``release.slug``
+    (shared by all reasoning-effort variants) and ``suffix``; the per-variant
+    top-level ``slug`` is gone. Parse the array itself rather than scanning for
+    record-shaped objects, so unrelated page cards cannot leak in. Any identity
+    ambiguity fails closed.
+    """
+    marker = '"initialModels":'
+    count = payload.count(marker)
+    if count != 1:
+        raise ValueError(f'expected one initialModels array, found {count}')
+    start = re.compile(r'\s*').match(payload, payload.index(marker) + len(marker)).end()
+    models, _ = json.JSONDecoder().raw_decode(payload, start)
+    if not isinstance(models, list) or not models:
+        raise ValueError('initialModels is empty or not a list')
+    out = {}
+    for rec in models:
+        if not isinstance(rec, dict):
+            raise ValueError('non-object leaderboard record')
+        mid, release = rec.get('id'), rec.get('release')
+        if not isinstance(mid, str) or not mid:
+            raise ValueError(f'leaderboard record without model id: {rec.get("name")!r}')
+        if not isinstance(release, dict) or not isinstance(release.get('slug'), str) or not release['slug']:
+            raise ValueError(f'leaderboard record {mid} without release slug')
+        if mid in out:
+            raise ValueError(f'duplicate leaderboard model id {mid}')
+        out[mid] = rec
     return out
 
 
@@ -457,10 +514,11 @@ def scrape(max_age_h=12, ii_weights=None):
     if not ii_weights:
         raise ValueError('ii_weights is required — call load_ii_benchmarks() first')
 
-    # --- primary scrape: the complete model dataset from /leaderboards/models
+    # --- primary scrape: the complete model dataset from /leaderboards/models,
+    # keyed by AA's UUID model id (see leaderboard_records).
     try:
         raw = fetch(MODELS_PAGE, DATA / 'leaderboards-models.html', max_age_h)
-        records = extract_records(flight(raw))
+        records = leaderboard_records(flight(raw))
     except Exception as e:
         report['leaderboards/models'] = f'FAILED: {e}'
         return dict(models), report
@@ -487,10 +545,10 @@ def scrape(max_age_h=12, ii_weights=None):
         total = aggregate_cost(rec)
         if total is not None:
             models[s]['_ii_cost_total'] = total
-    # AA public model-page payloads carry per-benchmark splits. Some pages
-    # contain full data, some selected models: require every leaderboard
-    # aggregate-bearing model to have its own exact validated v5 split.
-    costmap, carrier = _fetch_cost_breakdown(records, max_age_h)
+    # AA public model-page payloads carry per-benchmark splits. Release pages list
+    # every variant: require every leaderboard aggregate-bearing model to have its
+    # own exact-id validated v5 split.
+    costmap, carrier, id2slug = _fetch_cost_breakdown(records, max_age_h)
     n_checked = n_bad = 0
     for s, weighted in costmap.items():
         if s not in models:
@@ -510,10 +568,10 @@ def scrape(max_age_h=12, ii_weights=None):
               file=sys.stderr)
         sys.exit(1)
     source_zeros = sum(1 for s, split in costmap.items() if s in models and sum(split.values()) == 0)
-    report[f'models/{carrier}'] = (f'v5 cost split ({len(costmap)} complete source splits, '
-                                   f'{n_checked} leaderboard totals cross-checked, '
-                                   f'{counts["cost_task"]} positive leaderboard prices, '
-                                   f'{source_zeros} source-zero prices excluded)')
+    report['models/release pages'] = (f'v5 cost split from {carrier} ({len(costmap)} complete source splits, '
+                                       f'{n_checked} leaderboard totals cross-checked, '
+                                       f'{counts["cost_task"]} positive leaderboard prices, '
+                                       f'{source_zeros} source-zero prices excluded)')
     report['leaderboards/models'] = (
         f'{len(records)} records — '
         + ', '.join(f'{f}:{counts[f]}' for f in FIELD_MAP if counts[f]))
@@ -521,6 +579,9 @@ def scrape(max_age_h=12, ii_weights=None):
     # --- cross-validation: JSON-LD score rows when available; otherwise
     # the evaluation page's own model payload. AA's JSON-LD now sometimes
     # contains only Dataset metadata, without any numeric score rows.
+    # Evaluation-page records publish the same UUID id as the leaderboard, so
+    # joins are by exact id; slug-keyed JSON-LD rows are translated through the
+    # AA-published id<->slug pairs, never by matching shared release slugs.
     # Mismatches reject that benchmark's values.
     for slug, page_checks in PAGES.items():
         checks = page_checks if isinstance(page_checks, list) else [page_checks]
@@ -537,12 +598,13 @@ def scrape(max_age_h=12, ii_weights=None):
         for field, label in checks:
             key = report_key(field)
             try:
-                truth = jsonld_scores(raw, label)
+                if evaluation_records is None:
+                    evaluation_records = _records_by_id(extract_records(flight(raw)))
+                    _merge_slug_map(id2slug, {mid: rec['slug'] for mid, rec in evaluation_records.items()})
+                truth = _rekey_by_id(jsonld_scores(raw, label), id2slug)
                 source = 'JSON-LD'
                 if not truth:
-                    if evaluation_records is None:
-                        evaluation_records = extract_records(flight(raw))
-                    truth = {s: value for s, rec in evaluation_records.items()
+                    truth = {mid: value for mid, rec in evaluation_records.items()
                              if (value := _score_value(rec, FIELD_MAP[field])) is not None}
                     source = 'evaluation-page payload (JSON-LD score rows unavailable)'
                 checked = bad = 0
@@ -564,6 +626,10 @@ def scrape(max_age_h=12, ii_weights=None):
             except Exception as exc:
                 report[key] = f'validation FAILED: {exc}'
         time.sleep(0.5)
+    # Per-variant slugs are kept only where AA publishes them next to the id.
+    for mid, variant_slug in id2slug.items():
+        if mid in models:
+            models[mid]['variant_slug'] = variant_slug
     return dict(models), report
 
 
@@ -652,11 +718,20 @@ def _watch_analyst_agent(models):
     return n
 
 
+def _tie(row):
+    """Tie-break for equal displayed scores: model name, then the stable model key.
+
+    Model keys are AA UUIDs since 2026-11, so ordering ties by key alone would
+    look arbitrary; names keep tied rows in the readable order slugs used to give.
+    """
+    return (str(row.get('name', '')).casefold(), row['slug'])
+
+
 def zscore_battery(models, battery=BATTERY):
     """Normalize every dimension over the same complete cohort; score all components or none."""
     rows = []
     for slug, d in models.items():
-        r = {'slug': slug, 'name': d.get('name', slug)}
+        r = {'slug': slug, 'name': d.get('name', slug), 'variant_slug': d.get('variant_slug')}
         for f in battery:
             r[f] = d.get(f)
         r['cost_task'] = d.get('cost_task')
@@ -694,7 +769,7 @@ def zscore_battery(models, battery=BATTERY):
             r['softminz'] = None
 
     ranked = sorted([r for r in rows if r['softminz'] is not None],
-                    key=lambda r: (-r['softminz'], r['slug']))
+                    key=lambda r: (-r['softminz'], *_tie(r)))
     for i, r in enumerate(ranked, 1):
         r['rank'] = i
     return ranked, rows, zstats
@@ -866,8 +941,15 @@ def comparison_data(ranked, battery=BATTERY):
                        'mean_z': statistics.mean(zs), 'worst_z': min(zs),
                        'softminz': row['softminz'], 'cost_task': row.get('cost_task')})
     slugs = {m['slug'] for m in models}
-    default_a = 'gpt-6-astra-high' if 'gpt-6-astra-high' in slugs else (models[0]['slug'] if models else None)
-    default_b = 'claude-opus-5-5' if 'claude-opus-5-5' in slugs and default_a != 'claude-opus-5-5' else next(
+    # Preferred pair is named by AA per-variant slug; models are keyed by AA id,
+    # so resolve through each row's AA-published variant slug.
+    by_variant = {row.get('variant_slug'): str(row['slug']) for row in ranked if row.get('variant_slug')}
+    def preferred(variant):
+        key = by_variant.get(variant, variant)
+        return key if key in slugs else None
+    default_a = preferred('gpt-6-astra-high') or (models[0]['slug'] if models else None)
+    pref_b = preferred('claude-opus-5-5')
+    default_b = pref_b if pref_b and pref_b != default_a else next(
         (m['slug'] for m in models if m['slug'] != default_a), default_a)
     return {'cohort_size': len(models), 'generated': TODAY,
             'components': [{'key': b, 'label': BENCH_LABEL[b]} for b in battery],
@@ -975,14 +1057,14 @@ def build_html(ranked_sci, front_sci, zstats_sci, ranked_all, front_all,
         f'<tr><td>{esc(BENCH_LABEL[b])}</td><td class="num">{zstats_all[b][0]:.6f}</td>'
         f'<td class="num">{zstats_all[b][1]:.6f}</td></tr>' for b in BATTERY_ALL)
 
-    rows_smz_sci = sorted(ranked_sci, key=lambda r: (-r['softminz'], r['slug']))
+    rows_smz_sci = sorted(ranked_sci, key=lambda r: (-r['softminz'], *_tie(r)))
     rows_cost_sci = sorted(ranked_sci, key=lambda r: (r.get('cost_task') is None,
                                                      r.get('cost_task') or 0,
-                                                     -r['softminz'], r['slug']))
-    rows_smz_all = sorted(ranked_all, key=lambda r: (-r['softminz'], r['slug']))
+                                                     -r['softminz'], *_tie(r)))
+    rows_smz_all = sorted(ranked_all, key=lambda r: (-r['softminz'], *_tie(r)))
     rows_cost_all = sorted(ranked_all, key=lambda r: (r.get('cost_task') is None,
                                                      r.get('cost_task') or 0,
-                                                     -r['softminz'], r['slug']))
+                                                     -r['softminz'], *_tie(r)))
 
     def table_rows(rows, frontier_slugs):
         out = []
@@ -1008,7 +1090,7 @@ def build_html(ranked_sci, front_sci, zstats_sci, ranked_all, front_all,
         ranked, front, stats, image = variants[key]
         front_slugs = {r['slug'] for r in front}
         ordered_cost = sorted(ranked, key=lambda r: (r.get('cost_task') is None,
-                              r.get('cost_task') or 0, -r['softminz'], r['slug']))
+                              r.get('cost_task') or 0, -r['softminz'], *_tie(r)))
         h2h = render_head_to_head(ranked, prefix='h2h-' + key, battery=battery,
                                  set_label=key.replace('-', ' '),
                                  section_id='head-to-head-' + key, with_script=False)
@@ -1375,7 +1457,7 @@ def main(max_age_h=12):
     print('\nPARETO FRONTIER SCIENCE (cheapest first):')
     for r in front_sci:
         print(f"  ${r['cost_task']:>7.4f}  SoftMinZ {r['softminz']:>6}  {r['name']}")
-    g = next((r for r in ranked_all if 'gemini-3-1-pro' in r['slug']), None)
+    g = next((r for r in ranked_all if 'gemini-3-1-pro' in (r.get('variant_slug') or '')), None)
     if g:
         print(f"\nGemini 3.1 Pro: rank {g['rank']}, SoftMinZ {g['softminz']}, {fmt_cost(g.get('cost_task'))}/task")
 
