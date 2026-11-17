@@ -947,7 +947,7 @@ def comparison_data(ranked, battery=BATTERY):
     def preferred(variant):
         key = by_variant.get(variant, variant)
         return key if key in slugs else None
-    default_a = preferred('gpt-6-astra-high') or (models[0]['slug'] if models else None)
+    default_a = preferred('gpt-6-2-astra-high') or (models[0]['slug'] if models else None)
     pref_b = preferred('claude-opus-5-5')
     default_b = pref_b if pref_b and pref_b != default_a else next(
         (m['slug'] for m in models if m['slug'] != default_a), default_a)

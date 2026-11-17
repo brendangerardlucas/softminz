@@ -455,14 +455,15 @@ class HeadToHeadTests(unittest.TestCase):
 
     def test_default_recent_pair_when_present(self):
         ranked=self.rows()
-        ranked[0]['slug']='gpt-6-astra-high'; ranked[1]['slug']='claude-opus-5-5'
+        # Not ranked[0]: the top-ranked fallback must not satisfy this test by accident.
+        ranked[3]['slug']='gpt-6-2-astra-high'; ranked[1]['slug']='claude-opus-5-5'
         data=w.comparison_data(ranked)
-        self.assertEqual(data['default_a'],'gpt-6-astra-high')
+        self.assertEqual(data['default_a'],'gpt-6-2-astra-high')
         self.assertEqual(data['default_b'],'claude-opus-5-5')
 
     def test_default_pair_resolved_from_variant_slug_when_keyed_by_id(self):
         ranked=self.rows()
-        ranked[2]['variant_slug']='gpt-6-astra-high'; ranked[4]['variant_slug']='claude-opus-5-5'
+        ranked[2]['variant_slug']='gpt-6-2-astra-high'; ranked[4]['variant_slug']='claude-opus-5-5'
         data=w.comparison_data(ranked)
         self.assertEqual(data['default_a'],ranked[2]['slug'])
         self.assertEqual(data['default_b'],ranked[4]['slug'])

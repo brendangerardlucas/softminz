@@ -70,7 +70,7 @@ before formatting to three decimals, not subtraction of rounded display values.
 Near-zero differences can display as zero; these are SD units, not significance
 tests. Mean z, worst z, SoftMinZ and published cost are summarized below.
 
-The default is GPT-6 Astra High versus Claude Opus 5.5 Max when available, otherwise
+The default is GPT-6.2 Astra High versus Claude Opus 5.5 Max when available, otherwise
 two ranked models. The default table is server-rendered and readable without
 JavaScript; changing selections requires JavaScript. All data and vanilla browser
 code are embedded in the single generated HTML page: no dependencies, backend
